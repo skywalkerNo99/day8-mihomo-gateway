@@ -1,0 +1,9 @@
+.git
+.venv
+.tools
+.local
+**/__pycache__
+secrets
+*.log
+*.private.*
+*.bak

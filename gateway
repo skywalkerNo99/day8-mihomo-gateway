@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Native bootstrap/launcher. No Docker, root access, or system proxy changes."""
+import gzip
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+import sys
+import tempfile
+import urllib.request
+import venv
+
+ROOT = Path(__file__).resolve().parent
+
+
+def bootstrap():
+    if sys.version_info < (3, 11):
+        raise SystemExit('Python 3.11+ is required (Linux may also need python3-venv).')
+    python = ROOT / '.venv/bin/python'
+    if not python.exists():
+        venv.EnvBuilder(with_pip=True).create(ROOT / '.venv')
+    subprocess.run([str(python), '-m', 'pip', 'install', '--disable-pip-version-check',
+                    '--only-binary=:all:', '-r', str(ROOT / 'requirements.txt')], check=True)
+    machine = {'x86_64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(platform.machine())
+    name = f'{platform.system().lower()}-{machine}'
+    lock = json.loads((ROOT / 'scripts/mihomo-lock.json').read_text())
+    if name not in lock['platforms']:
+        raise SystemExit(f'Unsupported native platform: {name}')
+    asset = lock['platforms'][name]
+    target = ROOT / '.tools/mihomo'
+    target.parent.mkdir(mode=0o700, exist_ok=True)
+    print(f'Downloading official Mihomo {lock["version"]} for {name}...', flush=True)
+    with urllib.request.urlopen(asset['url'], timeout=120) as response:
+        archive = response.read(100_000_000)
+    if hashlib.sha256(archive).hexdigest() != asset['sha256']:
+        raise SystemExit('Mihomo archive checksum mismatch; installation aborted.')
+    fd, tmp = tempfile.mkstemp(dir=target.parent)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(gzip.decompress(archive))
+        os.chmod(tmp, 0o700)
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    subprocess.run([str(target), '-v'], check=True)
+    print('Native bootstrap complete. No host routing was changed.')
+
+
+if __name__ == '__main__':
+    if sys.argv[1:2] == ['bootstrap']:
+        bootstrap()
+    else:
+        python = ROOT / '.venv/bin/python'
+        if not python.exists():
+            raise SystemExit('Run python3 gateway bootstrap first.')
+        os.environ['PYTHONPATH'] = str(ROOT / 'src')
+        os.execv(str(python), [str(python), '-m', 'day8_gateway.cli', *sys.argv[1:]])

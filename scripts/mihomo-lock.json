@@ -1,0 +1,21 @@
+{
+  "version": "v1.19.24",
+  "platforms": {
+    "darwin-amd64": {
+      "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-darwin-amd64-v1.19.24.gz",
+      "sha256": "5e71b3dff12af523858da02cc2b7e872a84c657554431766b4b3c61774e9f06d"
+    },
+    "darwin-arm64": {
+      "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-darwin-arm64-v1.19.24.gz",
+      "sha256": "3615d13fbddd8b8e752f95f492c8887ba629671457fbe55ba80d523d6e2e03c3"
+    },
+    "linux-amd64": {
+      "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-linux-amd64-compatible-v1.19.24.gz",
+      "sha256": "7c8678fc20a1d3af9bfb87ccee428112b74398f7e04b6ddb044f1e7b94539870"
+    },
+    "linux-arm64": {
+      "url": "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.24/mihomo-linux-arm64-v1.19.24.gz",
+      "sha256": "6d4a278e7ace1016f23d7245f6f8911f6f7a4adfba2095704473d937e1911840"
+    }
+  }
+}
