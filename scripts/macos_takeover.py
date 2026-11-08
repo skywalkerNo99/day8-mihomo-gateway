@@ -14,7 +14,7 @@ import tempfile
 import time
 
 import macos_persistent as install
-from day8_gateway import catalog, macos_keychain, runtime, single_app, verify
+from day8_gateway import catalog, macos_keychain, residual, runtime, single_app, verify
 from day8_gateway.tun_verify import interface
 
 ROOT, HOME = install.ROOT, install.SUPPORT
@@ -105,6 +105,7 @@ def preflight():
     vault = HOME / 'deployment.enc.json'
     payload = macos_keychain.unlock(vault)
     key = macos_keychain.read_key(vault)
+    residual.load(HOME, vault, key, payload)
     adapter_port = runtime.control(HOME, 'status')['adapter_port']
     cfg = single_app.routing(payload, key, adapter_port)
     binary = ROOT / '.tools/mihomo'
@@ -191,7 +192,9 @@ def migrate():
     (HOME / 'mihomo').chmod(0o700)
     vault = HOME / 'deployment.enc.json'
     payload = macos_keychain.unlock(vault)
-    key = single_app.link_key(macos_keychain.read_key(vault))
+    vault_key = macos_keychain.read_key(vault)
+    residual.load(HOME, vault, vault_key, payload)
+    key = single_app.link_key(vault_key)
     state = {'hadLogin': session('login', check=False), 'prepared': False}
     install.atomic(STATE, json.dumps(state).encode())
     try:

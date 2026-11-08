@@ -22,7 +22,7 @@ private let kinds = ["exact", "suffix", "keyword"]
 private func label(_ key: String) -> String {
     switch key {
     case "Day8-native": return "Day8"
-    case "Residual-egress": return "Day8 → 1024"
+    case "Residual-egress": return "Day8 → residual"
     case "DIRECT": return "DIRECT · 直连"
     case "REJECT": return "拒绝"
     case "exact": return "精确域名"

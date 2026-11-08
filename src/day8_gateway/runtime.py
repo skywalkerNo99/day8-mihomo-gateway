@@ -2,18 +2,19 @@
 import asyncio
 import contextlib
 import fcntl
+import http.client
 import json
 import os
 from pathlib import Path
 import signal
 import socket
 
-from . import catalog, adapter, controller, domain_policy, monitor as metrics, node_updates, verify
+from . import catalog, adapter, config, controller, domain_policy, monitor as metrics, node_updates, residual, verify
 
 
 def control(root, command, **kwargs):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        timeouts = {'change-domain-rule': 60, 'verify-system-tun': 90, 'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
+        timeouts = {'save-residual': 180, 'change-domain-rule': 60, 'verify-system-tun': 90, 'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
         sock.settimeout(timeouts.get(command, 5))
         sock.connect(str(Path(root) / '.local/control.sock'))
         sock.sendall(json.dumps({'command': command, **kwargs}).encode() + b'\n')
@@ -181,6 +182,41 @@ async def serve(payload, cfg, args, ready_fd=None):
                 raise
         return {'ok': True}
 
+    async def save_residual(edit):
+        async with update_lock:
+            try:
+                new = residual.candidate(payload, args.update_key, edit)
+            except ValueError as exc:
+                return {'ok': False, 'error': str(exc)}
+            try:
+                verified = await asyncio.to_thread(residual.test_exit, new, args.adapter_port)
+            except (OSError, ValueError, http.client.HTTPException):
+                verified = False
+            if not verified:
+                return {'ok': False, 'error': '候选代理未通过 ChatGPT 出口核验，请检查接入地址、凭据和预期出口。'}
+            if residual.settings(new) == residual.settings(payload):
+                return {'ok': True}
+
+            nodes = config.nodes(new, args.adapter_port)
+            extra = [p for p in cfg['proxies'] if p['name'] not in (config.TRANSPORT, config.EGRESS)]
+            updated = {**cfg, 'proxies': nodes + extra}
+            try:
+                await asyncio.to_thread(controller.apply, *endpoint(), updated)
+                result = await asyncio.to_thread(verify.check, f'http://127.0.0.1:{args.port}', new['expected_exit_ip'], 1)
+                if not result['ok']:
+                    raise RuntimeError('Active route verification failed.')
+                residual.save(root, args.vault, args.update_key, new)
+            except Exception:
+                try:
+                    await asyncio.to_thread(controller.apply, *endpoint(), cfg)
+                except Exception:
+                    stop.set()  # Reload the last authenticated settings from disk.
+                return {'ok': False, 'error': '应用或保存失败，后台服务使用之前的配置。'}
+            policy.proxies = nodes
+            cfg.update(updated)
+            payload.update(residual.settings(new))
+            return {'ok': True}
+
     async def connection(reader, writer):
         try:
             message = json.loads(await asyncio.wait_for(reader.readline(), 5))
@@ -201,6 +237,13 @@ async def serve(payload, cfg, args, ready_fd=None):
                 from . import tun_verify
                 result = await asyncio.to_thread(tun_verify.check, *endpoint(), payload['expected_exit_ip'],
                                                  policy.ordinary_probe())
+            elif command in ('get-residual', 'save-residual'):
+                if policy is None:
+                    result = {'ok': False, 'error': '请在 Mac 单 App 模式中编辑 residual。'}
+                elif command == 'get-residual':
+                    result = residual.form(payload, args.update_key)
+                else:
+                    result = await save_residual(message['edit'])
             elif command == 'domain-rules' and policy is not None:
                 result = policy.snapshot()
             elif command == 'domain-events' and journal is not None:

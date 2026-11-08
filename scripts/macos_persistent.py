@@ -134,7 +134,7 @@ def remove(args):
     (SUPPORT / 'deployment.enc.json').unlink(missing_ok=True)
     (SUPPORT / 'routes.enc.json').unlink(missing_ok=True)
     (SUPPORT / 'routes.local.enc.json').unlink(missing_ok=True)
-    for name in ('node.enc', 'domain-rules.enc', 'probe-settings.json', 'probe-results.json'):
+    for name in ('node.enc', 'residual.enc', 'domain-rules.enc', 'probe-settings.json', 'probe-results.json'):
         (SUPPORT / '.local' / name).unlink(missing_ok=True)
     print('Original profile restored. LaunchAgent removed.')
 

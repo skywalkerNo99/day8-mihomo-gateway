@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from . import config, controller, macos_keychain, node_updates, runtime, scheduled_probes, single_app
+from . import config, controller, macos_keychain, node_updates, residual, runtime, scheduled_probes, single_app
 from .cli import core_settings, read_yaml
 
 LOCK = 'Day8-Startup-Locked'
@@ -85,6 +85,7 @@ def main():
         args.vault = args.root / 'deployment.enc.json'
         payload = macos_keychain.unlock(args.vault)
         args.update_key = macos_keychain.read_key(args.vault)
+        residual.load(args.root, args.vault, args.update_key, payload)
         node_updates.load_saved(args.root, args.vault, args.update_key, payload)
         asyncio.run(supervise(payload, args))
     except Exception:

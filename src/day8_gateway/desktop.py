@@ -34,6 +34,13 @@ def send_packet(context, target, packet):
 
 def main(args):
     action, *params = args
+    if action == 'get-residual':
+        return runtime.control(ROOT, action)
+    if action == 'save-residual':
+        data = sys.stdin.buffer.read(node_updates.LIMIT + 1)
+        if len(data) > node_updates.LIMIT:
+            raise ValueError('Input too large.')
+        return runtime.control(ROOT, action, edit=json.loads(data))
     if action == 'domain-rules':
         return runtime.control(ROOT, action)
     if action == 'domain-events':

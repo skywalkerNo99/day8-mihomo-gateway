@@ -49,9 +49,15 @@ sudo tail -f /var/log/io.day8gateway.tun.log
 .venv/bin/python scripts/macos_takeover.py rollback
 ```
 
+## 从 App 修改 residual 住宅代理
+
+在单 App 模式下打开「配置与账户 → 编辑 residual 配置…」。填写 SOCKS5 接入地址、端口、用户名、密码和预期出口 IP。原地址和端口未变时，密码留空可沿用。更换接入地址或端口须重新输入密码。预期出口填写目标站点应看到的公网 IP。
+
+点「验证并保存」后，后台先经当前 Day8 线路单独测试候选代理。ChatGPT 的 trace 匹配预期值后，后台热加载配置，再从实际分流核心核验、加密保存。失败时继续使用旧配置。已建立的连接可能继续使用原出口，新连接使用新配置。修改只应用于本机；与基础 vault 绑定的加密覆盖文件保存在登录服务的 `.local/residual.enc`，下次登录自动加载。Linux 容器及仓库部署副本单独管理。
+
 ## 日常操作
 
-- **线路监测** 每 30 秒分别通过 mihomo 指定 Day8 第一跳和经 Day8 的 1024proxy 出站进行 HTTPS 探测。窗口显示最近 20 个样本、时延和当前 Clash 总连接数。「核验出口」会比对 ChatGPT 自身 trace 与 vault 中的预期值。单 App 模式同时核对整机分流，兼容模式经 Clash 入口重复核验三次。
+- **线路监测** 每 30 秒分别通过 mihomo 指定 Day8 第一跳和经 Day8 的 residual 出站进行 HTTPS 探测。窗口显示最近 20 个样本、时延和当前 Clash 总连接数。「核验出口」会比对 ChatGPT 自身 trace 与 vault 中的预期值。单 App 模式同时核对整机分流，兼容模式经 Clash 入口重复核验三次。
 - **配置与账户** 打开官方桌面客户端，在「账号 → 购买会员」中办理充值，会员信息和订单由官方处理。日常代理流量使用独立 Muon 服务。
 - **节点更新** 先在官方 App 刷新。管理 App 的读取按钮检查本机 Day8 的 TOML 是否有可唯一识别、包含完整认证字段的 Muon 出站。本机验证的 Day8 1.1.0 文件只包含入口和路由，无法据此自动同步账户节点。遇到此状态会显示原因。可选用服务方或管理员提供的 Muon 节点 JSON，字段见 [凭据格式](security.md) 的 `day8` 对象，或导入由同一基础 vault 密钥认证的 `.enc` 节点包。导入仅更新 Day8；住宅凭据和出口预期值取自基础 vault。尝试新节点期间可能短暂影响新连接，出口验证通过后保存加密更新，失败则恢复上个节点。
 - **Linux 容器** 输入目标 Docker Context（远程主机可使用 SSH Context），查找容器，选中指定目标后点击应用。仅列出运行中的 Compose `day8-gateway` 服务。要求目标运行已升级的本项目，且已登记与 Mac 相同的基础 vault。更新经 Docker exec 的 stdin 传入，目标独立完成认证及住宅出口验证。[Linux 配置与监控](container.md)

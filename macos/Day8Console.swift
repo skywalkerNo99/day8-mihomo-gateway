@@ -10,6 +10,7 @@ struct Route: Decodable, Identifiable {
 }
 
 struct Reply: Decodable {
+    var residual: ResidualFields?
     var domainRules: [DomainRule]?
     var protectedDomains: [String]?
     var revision: String?
@@ -37,7 +38,7 @@ struct Reply: Decodable {
     var error: String?
 }
 
-func runBridge(_ arguments: [String]) async throws -> Reply {
+func runBridge(_ arguments: [String], input: Data? = nil) async throws -> Reply {
     try await Task.detached {
         let process = Process()
         process.executableURL = support.appendingPathComponent(".venv/bin/python")
@@ -49,7 +50,13 @@ func runBridge(_ arguments: [String]) async throws -> Reply {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
+        let inputPipe = input.map { _ in Pipe() }
+        if let inputPipe { process.standardInput = inputPipe }
         try process.run()
+        if let input, let inputPipe {
+            defer { try? inputPipe.fileHandleForWriting.close() }
+            try inputPipe.fileHandleForWriting.write(contentsOf: input)
+        }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return try JSONDecoder().decode(Reply.self, from: data)
@@ -388,6 +395,7 @@ private struct Panel: View {
     @StateObject private var model = Dashboard()
     @AppStorage("dockerContext") private var context = ""
     @State private var contexts = [String]()
+    @State private var editingResidual = false
     @State private var tab = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -410,7 +418,7 @@ private struct Panel: View {
                     Label(device == "utun63" ? "整机 TUN 已接管 · " + device : "整机路由待检查 · " + device,
                           systemImage: device == "utun63" ? "network" : "exclamationmark.triangle")
                 }
-                ForEach([("Day8-native", "Day8", "第一跳 · Muon TCP"), ("Residual-egress", "1024proxy", "第二跳 · 经 Day8 的住宅出口")], id: \.0) { name, title, subtitle in
+                ForEach([("Day8-native", "Day8", "第一跳 · Muon TCP"), ("Residual-egress", "residual", "第二跳 · 经 Day8 的住宅出口")], id: \.0) { name, title, subtitle in
                     GroupBox {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) { Text(name == "Day8-native" ? "Day8 · " + (model.activeName ?? "线路未知") : title).font(.headline); Text(subtitle).foregroundStyle(.secondary) }
@@ -443,6 +451,14 @@ private struct Panel: View {
             } else if tab == 3 {
                 RouteMeasurements(model: model)
             } else if tab == 1 {
+                Button("编辑 residual 配置…") { editingResidual = true }
+                    .sheet(isPresented: $editingResidual) {
+                        ResidualEditor {
+                            model.info = "residual 出口核验通过。"
+                            model.exitStatus = "出口匹配"
+                        }
+                    }
+                Divider()
                 Text("Day8 官方账户").font(.headline)
                 Text("节点在官方客户端内刷新。充值入口位于「账号 → 购买会员」。").foregroundStyle(.secondary)
                 Button("前往 Day8 账号与充值") { model.vendor() }
@@ -518,5 +534,82 @@ private struct Panel: View {
             Divider()
             Button("退出管理界面（网关继续运行）") { NSApp.terminate(nil) }
         }
+    }
+}
+
+struct ResidualFields: Decodable {
+    let server: String
+    let port: Int
+    let username: String
+    let expectedExit: String
+}
+
+private struct ResidualEdit: Encodable {
+    let server: String
+    let port: Int
+    let username: String
+    let password: String
+    let expectedExit: String
+    let revision: String
+}
+
+private struct ResidualEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var server = ""
+    @State private var port = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var expected = ""
+    @State private var revision = ""
+    @State private var message = ""
+    @State private var busy = false
+    let onSaved: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("编辑 residual").font(.title2.bold())
+            Form {
+                TextField("SOCKS5 接入地址", text: $server)
+                TextField("端口", text: $port)
+                TextField("代理用户名", text: $username)
+                SecureField("代理密码", text: $password, prompt: Text("留空沿用当前密码"))
+                TextField("预期出口 IP", text: $expected)
+            }.disabled(busy || revision.isEmpty)
+            Text("更换接入地址或端口时，请重新输入密码。保存前会经 Day8 核验 ChatGPT 看到的出口。")
+                .font(.callout).foregroundStyle(.secondary)
+            if !message.isEmpty { Text(message).font(.callout) }
+            HStack {
+                if busy { ProgressView().controlSize(.small); Text("正在核验…") }
+                Spacer()
+                Button("取消") { dismiss() }.disabled(busy)
+                Button("验证并保存") { Task { await save() } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(busy || revision.isEmpty || server.isEmpty || username.isEmpty ||
+                              expected.isEmpty || !(1...65535).contains(Int(port) ?? 0))
+            }
+        }.padding(22).frame(width: 475)
+        .task {
+            let reply = try? await runBridge(["get-residual"])
+            guard let fields = reply?.residual, let version = reply?.revision else {
+                message = reply?.error ?? "无法读取 residual 配置。"
+                return
+            }
+            server = fields.server; port = String(fields.port); username = fields.username
+            expected = fields.expectedExit; revision = version
+        }
+    }
+
+    @MainActor private func save() async {
+        guard !busy, let number = Int(port) else { return }
+        busy = true; message = ""
+        defer { busy = false }
+        let fields = ResidualEdit(server: server, port: number, username: username, password: password,
+                                  expectedExit: expected, revision: revision)
+        do {
+            let data = try JSONEncoder().encode(fields)
+            let reply = try await runBridge(["save-residual"], input: data)
+            if reply.ok { password = ""; onSaved(); dismiss() }
+            else { message = reply.error ?? "核验失败，请检查代理配置。" }
+        } catch { message = "后台服务通信中断，请重新打开编辑窗口核对当前配置。" }
     }
 }
