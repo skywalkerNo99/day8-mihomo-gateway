@@ -54,6 +54,8 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
     @Published var activeName: String?
     @Published var delays = [String: Int]()
     @Published var routeMessage = ""
+    @Published var measuringRoutes = false
+    @Published var measuredAt: Date?
     @Published var snapshot: Reply?
     @Published var checked: Date?
     @Published var busy = false
@@ -96,19 +98,20 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
     func manageRoutes(_ args: [String]) async {
         guard !busy else { return }
         busy = true
-        defer { busy = false }
-        routeMessage = args.first == "route-delays" ? "正在逐条测试 HTTPS，最多同时测试四条。" : "正在验证线路…"
+        measuringRoutes = args.first == "route-delays"
+        defer { busy = false; measuringRoutes = false }
+        routeMessage = measuringRoutes ? "" : "正在验证线路…"
         do {
             let reply = try await runBridge(args)
-            if let samples = reply.delays { delays = samples }
-            if args.first == "import-routes" && reply.ok { delays = [:] }
+            if reply.ok, let samples = reply.delays { delays = samples; measuredAt = Date() }
+            if args.first == "import-routes" && reply.ok { delays = [:]; measuredAt = nil }
             await readRoutes()
             if !reply.ok { routeMessage = "操作失败，请核对线路参数和住宅出口。"; return }
             if args.first == "select-route" {
                 routeMessage = "已验证住宅出口，当前线路为 " + (activeName ?? "未知")
                 await refresh()
             } else {
-                routeMessage = args.first == "route-delays" ? "测速完成。" : "已更新加密连接参数。"
+                routeMessage = args.first == "route-delays" ? "" : "已更新加密连接参数。"
             }
         } catch { routeMessage = "管理服务未响应，请检查后台服务。" }
     }
@@ -165,6 +168,162 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
     }
 }
 
+private struct RouteMeasurements: View {
+    @ObservedObject var model: Dashboard
+    @State private var order: Order = .latency
+
+    private enum Order: String, CaseIterable {
+        case latency = "延迟优先", catalog = "目录顺序", failures = "失败优先"
+    }
+    private let mint = Color(red: 0.48, green: 0.93, blue: 0.81)
+    private let teal = Color(red: 0.08, green: 0.54, blue: 0.47)
+
+    private var rows: [Route] { model.visibleRoutes }
+    private var successful: [(route: Route, delay: Int)] {
+        rows.compactMap { row in
+            guard let ms = model.delays[row.id], ms >= 0 else { return nil }
+            return (row, ms)
+        }
+    }
+    private var sortedRows: [Route] {
+        guard order != .catalog else { return rows }
+        func rank(_ id: String) -> (Int, Int) {
+            guard let ms = model.delays[id] else { return (2, 0) }
+            if ms < 0 { return (order == .failures ? 0 : 1, 0) }
+            return (order == .failures ? 1 : 0, ms)
+        }
+        return rows.enumerated().sorted { left, right in
+            let a = rank(left.element.id), b = rank(right.element.id)
+            return a == b ? left.offset < right.offset : a < b
+        }.map(\.element)
+    }
+
+    private func metric(_ title: String, value: String, note: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: icon).font(.subheadline.weight(.medium)).foregroundStyle(mint)
+            Text(value).font(.system(size: 25, weight: .semibold, design: .rounded)).monospacedDigit()
+                .foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.7)
+            Text(note).font(.caption).foregroundStyle(Color.white.opacity(0.85)).lineLimit(1)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var overview: some View {
+        let best = successful.min { $0.delay < $1.delay }
+        let active = model.activeID.flatMap { model.delays[$0] }
+        let measured = rows.compactMap { model.delays[$0.id] }
+        let failed = measured.filter { $0 < 0 }.count
+        return HStack(spacing: 20) {
+            metric("当前线路", value: model.activeName ?? "未知",
+                   note: active.map { $0 >= 0 ? "HTTPS  \($0) ms" : "HTTPS 探测失败" } ?? "等待 HTTPS 测速",
+                   icon: "antenna.radiowaves.left.and.right")
+            Rectangle().fill(.white.opacity(0.20)).frame(width: 1)
+            metric("最低延迟", value: best.map { "\($0.delay) ms" } ?? "—",
+                   note: best?.route.name ?? "暂无成功样本", icon: "bolt.fill")
+            Rectangle().fill(.white.opacity(0.20)).frame(width: 1)
+            metric("探测成功", value: measured.isEmpty ? "—" : "\(successful.count) / \(measured.count)",
+                   note: measured.isEmpty ? "共 \(rows.count) 条线路" : "\(failed) 条失败 · \(rows.count - measured.count) 条未测",
+                   icon: "checkmark.circle")
+        }
+        .padding(.horizontal, 20).padding(.vertical, 15)
+        .frame(height: 98)
+        .background(LinearGradient(colors: [Color(red: 0.07, green: 0.18, blue: 0.22),
+                                             Color(red: 0.09, green: 0.29, blue: 0.29)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 13))
+    }
+
+    private func dataRow(_ row: Route, maxDelay: Int) -> some View {
+        let current = model.activeID == row.id
+        let ms = model.delays[row.id]
+        let official = model.official?.first { $0.id == row.id }?.latency
+        return HStack(spacing: 12) {
+            HStack(spacing: 7) {
+                Image(systemName: current ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(current ? teal : Color.secondary.opacity(0.45))
+                    .accessibilityHidden(true)
+                Text(row.name).fontWeight(current ? .semibold : .regular).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 6) {
+                let good = ms.map { $0 >= 0 } ?? false
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.secondary.opacity(0.12))
+                        if good, let ms {
+                            Capsule().fill(current ? teal : Color.accentColor.opacity(0.70))
+                                .frame(width: max(2, geo.size.width * CGFloat(ms) / CGFloat(maxDelay)))
+                        }
+                    }
+                }.frame(width: 58, height: 4).accessibilityHidden(true)
+                Text(ms.map { $0 < 0 ? "失败" : "\($0) ms" } ?? "未测")
+                    .monospacedDigit().foregroundStyle(ms == nil ? Color.secondary : (good ? Color.primary : Color.red))
+                    .frame(width: 68, alignment: .trailing)
+            }.frame(width: 132, alignment: .trailing)
+            Text(official.map { "\($0) ms" } ?? "—").monospacedDigit().foregroundStyle(.secondary)
+                .frame(width: 74, alignment: .trailing)
+            Group {
+                if current {
+                    Text("使用中").font(.caption.weight(.semibold)).foregroundStyle(teal)
+                } else if row.available {
+                    Button("切换") { Task { await model.manageRoutes(["select-route", row.id]) } }
+                        .controlSize(.small).disabled(model.busy)
+                        .accessibilityLabel("切换到" + row.name)
+                } else { Text("不可切换").font(.caption).foregroundStyle(.secondary).help("缺少连接参数或线路维护中") }
+            }.frame(width: 62, alignment: .trailing)
+        }
+        .padding(.horizontal, 14).frame(height: 35)
+        .background(current ? teal.opacity(0.10) : Color.clear)
+    }
+
+    var body: some View {
+        let maximum = max(1, successful.map(\.delay).max() ?? 1)
+        VStack(alignment: .leading, spacing: 12) {
+            overview
+            HStack(spacing: 9) {
+                Text("线路列表").font(.headline)
+                Text("\(rows.count)").monospacedDigit().font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Picker("排序", selection: $order) {
+                    ForEach(Order.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }.labelsHidden().fixedSize()
+                Button("刷新官方列表") { Task { await model.refreshOfficial() } }.disabled(model.busy)
+                Button { Task { await model.manageRoutes(["route-delays"]) } } label: {
+                    Label(model.measuringRoutes ? "测速中…" : "全部测速", systemImage: "waveform.path.ecg")
+                }.buttonStyle(.borderedProminent).disabled(model.busy)
+            }
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Text("线路").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("HTTPS 延迟").frame(width: 132, alignment: .trailing)
+                    Text("官方延迟").frame(width: 74, alignment: .trailing)
+                    Text("操作").frame(width: 62, alignment: .trailing)
+                }.font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 14).frame(height: 30)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                Divider()
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(sortedRows) { route in
+                            dataRow(route, maxDelay: maximum)
+                            Divider().padding(.leading, 14)
+                        }
+                        if rows.isEmpty { Text("暂无线路").foregroundStyle(.secondary).padding() }
+                    }
+                }
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.secondary.opacity(0.2)))
+            HStack {
+                if model.measuringRoutes { ProgressView().controlSize(.small); Text("正在探测 · 最多 4 条并发") }
+                else if let time = model.measuredAt { Text("上次测速 " + time.formatted(date: .omitted, time: .standard)) }
+                Spacer()
+                Text(model.officialTime.map { "官方列表 " + $0.formatted(date: .omitted, time: .standard) } ?? "本机加密目录")
+            }.font(.caption).foregroundStyle(.secondary)
+            if !model.routeMessage.isEmpty { Text(model.routeMessage).font(.callout).textSelection(.enabled) }
+        }
+    }
+}
+
 private struct Panel: View {
     @StateObject private var model = Dashboard()
     @AppStorage("dockerContext") private var context = ""
@@ -212,31 +371,7 @@ private struct Panel: View {
                 }
                 if model.snapshot?.nodes == nil { Text("管理服务未就绪，当前没有测速结果。").foregroundStyle(.secondary) }
             } else if tab == 3 {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("当前线路 · " + (model.activeName ?? "未知")).font(.headline)
-                        Spacer()
-                        Button("刷新官方列表") { Task { await model.refreshOfficial() } }
-                        Button("全部测速") { Task { await model.manageRoutes(["route-delays"]) } }
-                    }
-                    if let time = model.officialTime {
-                        Text("官方面板 · \(model.visibleRoutes.count) 条 · " + time.formatted(date: .omitted, time: .standard)).font(.caption)
-                    } else { Text("已保存的线路 · \(model.savedRoutes.count) 条").font(.caption) }
-                    List(model.visibleRoutes) { row in
-                        HStack {
-                            Text(row.name)
-                            if row.id == model.activeID { Text("使用中").foregroundStyle(.teal) }
-                            Spacer()
-                            if let ms = model.delays[row.id] { Text(ms < 0 ? "探测失败" : "HTTPS \(ms) ms").monospacedDigit() }
-                            else if let ms = model.official?.first(where: { $0.id == row.id })?.latency { Text("官方 \(ms) ms").monospacedDigit() }
-                            if row.available {
-                                Button("切换") { Task { await model.manageRoutes(["select-route", row.id]) } }
-                                    .disabled(row.id == model.activeID)
-                            } else { Text("缺少参数或维护中").font(.caption) }
-                        }
-                    }.frame(minHeight: 200)
-                    if !model.routeMessage.isEmpty { Text(model.routeMessage).font(.callout) }
-                }.disabled(model.busy)
+                RouteMeasurements(model: model)
             } else if tab == 1 {
                 Text("Day8 官方账户").font(.headline)
                 Text("节点在官方客户端内刷新。充值入口位于「账号 → 购买会员」。").foregroundStyle(.secondary)
@@ -283,9 +418,9 @@ private struct Panel: View {
                 }
             }
             if tab != 0 && !model.info.isEmpty { Text(model.info).font(.callout).textSelection(.enabled) }
-            Spacer(minLength: 0)
+            if tab != 3 { Spacer(minLength: 0) }
         }
-        .padding(22).frame(minWidth: 490, minHeight: 355)
+        .padding(22).frame(minWidth: tab == 3 ? 660 : 490, minHeight: tab == 3 ? 510 : 355)
         .task {
             await model.readRoutes()
             if let reply = try? await runBridge(["contexts"]) {
