@@ -43,7 +43,9 @@ CORE_CONFIG='/实际路径/核心config.yaml'
 
 把 `7890` 换成这台 Mac 主 Clash 的实际 HTTP/mixed 端口。验证会向 `https://chatgpt.com/cdn-cgi/trace` 请求三次，要求 `h=chatgpt.com` 且 `ip` 与加密配置中的预期值一致，三次都满足才返回 `ok: true`。它确认该站点看到的连接 IP，不代表已完成登录、聊天、WebSocket 或订阅功能验证。
 
-在 Clash 连接页检查新连接的出口链包含 `Residual-egress`、`Day8-native`。规则更新不迁移已有 TCP 会话；验证/业务应重新建立连接。若旧会话仍在使用原出口，仅关闭相关应用连接再重试，不批量断开用户其他连接。
+在 Clash 连接页检查新连接使用 `Residual-egress`。部分核心的 `/connections` 只返回这个出口名称，不把内部 `dialer-proxy` 的 `Day8-native` 加入 chains；不能仅凭数组缺少后者就判定绕过。还应核对生成配置的固定 dialer-proxy、本地适配器的 SOCKS 入站与 Day8 出站 socket，以及核心中 Day8 bootstrap 连接为 DIRECT。不要输出完整配置或真实节点地址。
+
+规则更新不迁移已有 TCP 会话；验证/业务应重新建立连接。若旧会话仍在使用原出口，仅关闭相关应用连接再重试，不批量断开用户其他连接。
 
 ## 回退与重启
 

@@ -40,3 +40,11 @@ python3 scripts/audit.py
 ```
 
 前四条不需要真实凭据或密码；后三条需要用户本机解锁，并实际访问远端。`smoke_native.py` 使用 TEST-NET 合成配置、随机回环端口，不访问 Day8 或更改系统路由。
+
+## 2026-11-08 本机正式切换补充
+
+用户明确要求后，已将现有 macOS Mihomo v1.19.14 切到原生 Muon 适配器 + residual 的严格策略，TUN 保持启用，共 7 条规则。首次遇到原配置可选 mapping 为 null、以及 emoji 代理名称的 surrogate 转义问题，均在切换成功前修复；失败时原配置已恢复。修复已通过 15 项测试、完整原配置结构的 v1.19.14/v1.19.24 解析及内存 API 验证。
+
+正式切换后三次 ChatGPT trace 全部匹配 vault 预期出口，独立再次请求也匹配。原生适配器同时有回环 SOCKS 入站及 Day8 出站连接，核心观测到的 Day8 bootstrap 连接均为 DIRECT。该核心 chains 仅显示 Residual-egress，因此额外使用这些 socket 证据核对内部 dialer 通道。
+
+仅关闭了 25 条切换前遗留的 Apple/OpenAI 相关旧连接；复核时该范围没有旧出口连接。原 profile 文件未修改，Day8.app 未运行，当前通道不依赖容器。这是本机实际切换的增量记录，不把前一日隔离验收改写成当时已切换，也不扩展为长期稳定性证明。

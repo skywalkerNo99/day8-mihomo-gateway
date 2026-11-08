@@ -9,7 +9,7 @@
 5. macOS 接入必须读取该电脑实际 profile、核心配置、controller 与当前 TUN 状态，不复制另一台 Mac 的用户路径。先 `macos plan`；用户明确要求切换后才 `macos deploy --apply`。原文件不落盘修改，回退用 `macos restore`。核心/UI 重启后需重新解锁部署。
 6. 用户要求所有 Apple/OpenAI 域名固定出口时解释有限域名列表边界，推荐 `--strict`；它会把其他公网 TCP 一起交给 residual。确认 TUN/应用代理接管范围。不要声称绕过该 mihomo 的流量也受规则保障。
 7. 不能用 fallback/url-test 把 residual 换成默认 VPN，也不能只写 `udp: false`。必须保留 UDP REJECT，断路时失败；重连需要应用重试，不承诺恢复已有 TCP 会话。
-8. 通过 `./gateway verify` 验证 ChatGPT trace 的预期 IP，不能只用普通 IP 查询站点代替。控制 socket 返回匹配布尔值，不把真实出口写进仓库。macOS 接入模式要显式指定主 Clash 的代理端口。不要恢复用户已叫停的长时压测。
+8. 通过 `./gateway verify` 验证 ChatGPT trace 的预期 IP，不能只用普通 IP 查询站点代替。控制 socket 返回匹配布尔值，不把真实出口写进仓库。macOS 接入模式要显式指定主 Clash 的代理端口。部分核心的连接 chains 仅显示 Residual-egress；内部 dialer-proxy 需要结合固定配置、原生适配器 socket 与 bootstrap DIRECT 连接核对，不要求链数组一定包含 Day8-native。不要恢复用户已叫停的长时压测。
 9. 修改后运行测试、`scripts/audit.py`，检查 git diff 与 staged 文件。发布 GitHub 时核对目标个人账户、private 状态，不输出访问令牌。密码完成加密之前不能声称交付包含可部署凭据。
 10. Linux TUN、Docker 特权配置和系统代理切换都与普通回环代理不同，按文档明确执行并保留回退方式。任何测试都不能影响用户正在使用的主代理。
 
