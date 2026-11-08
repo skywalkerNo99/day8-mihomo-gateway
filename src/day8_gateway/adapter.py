@@ -53,7 +53,8 @@ def address(host, port):
 
 
 class Muon:
-    def __init__(self, config):
+    def __init__(self, config, dial=None):
+        self.dial = dial or asyncio.open_connection
         self.config = config
         size = {"aes-128-gcm": 16, "aes-256-gcm": 32}[config["cipher"]]
         self.server_psk = derive("nebrix-muon-server-psk", config["server_password"].encode(), size)
@@ -61,7 +62,7 @@ class Muon:
         self.size = size
 
     async def connect(self, host, port):
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(self.config["server"], self.config["port"]), 10)
+        reader, writer = await asyncio.wait_for(self.dial(self.config["server"], self.config["port"]), 10)
         salt = secrets.token_bytes(self.size)
         identity_key = derive("muon 2026 identity subkey", self.server_psk + salt, self.size)
         enc = Cipher(algorithms.AES(identity_key), modes.ECB()).encryptor()

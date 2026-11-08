@@ -7,7 +7,7 @@ build=$(mktemp -d)
 trap 'rm -rf "$build"' EXIT
 app="$build/Day8 Gateway.app"
 mkdir -p "$app/Contents/MacOS" "$build/cache"
-xcrun swiftc -parse-as-library -O -module-cache-path "$build/cache" "$repo/macos/Day8Console.swift" -o "$app/Contents/MacOS/Day8Console"
+xcrun swiftc -parse-as-library -O -module-cache-path "$build/cache" "$repo/macos/Day8Console.swift" "$repo/macos/OfficialRoutes.swift" -o "$app/Contents/MacOS/Day8Console"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>

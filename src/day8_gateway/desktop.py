@@ -1,4 +1,5 @@
 """Local bridge for the macOS app. Never return decrypted profiles to the GUI."""
+import asyncio
 import json
 from pathlib import Path
 import re
@@ -6,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-from . import macos_keychain, node_updates, official, runtime
+from . import catalog, macos_keychain, node_updates, official, runtime
 
 ROOT = Path.home() / 'Library/Application Support/Day8Gateway'
 BASE = ROOT / 'deployment.enc.json'
@@ -34,6 +35,23 @@ def send_packet(context, target, packet):
 
 def main(args):
     action, *params = args
+    if action in ('routes', 'select-route', 'route-delays', 'import-routes'):
+        key = macos_keychain.read_key(BASE)
+        if action == 'import-routes':
+            catalog.save_export(Path(params[0]), BASE, ROOT / 'routes.local.enc.json', key, macos_keychain.unlock(BASE))
+        entries = catalog.read(ROOT, key)
+        if action == 'route-delays':
+            return {'ok': True, 'delays': asyncio.run(catalog.probe_routes(entries))}
+        if action == 'select-route':
+            entry = next((e for e in entries if e['id'] == params[0]), None)
+            if not entry or not entry['node'] or entry['maintenance']:
+                return {'ok': False, 'error': 'UnavailableRoute'}
+            packet = node_updates.seal(BASE, key, macos_keychain.unlock(BASE), entry['node'])
+            result = runtime.control(ROOT, 'apply-node', packet=packet)
+            if not result.get('ok'):
+                return result
+        active = runtime.control(ROOT, 'status')['route_token']
+        return {'ok': True, **catalog.summary(entries, key, active)}
     if action == 'health':
         return runtime.control(ROOT, 'health')
     if action == 'verify':

@@ -44,6 +44,12 @@ def select(name):
     subprocess.run(['/usr/bin/defaults', 'write', svc.APP_ID, 'selectConfigName', '-string', name], check=True)
 
 
+def install_catalog():
+    source = ROOT / 'secrets/routes.enc.json'
+    if source.is_file():
+        atomic(SUPPORT / 'routes.enc.json', source.read_bytes())
+
+
 def install(args):
     if STATE.exists() or JOB.exists() or args.locked.exists():
         raise SystemExit('An installation or profile already exists. Inspect it before reinstalling.')
@@ -69,6 +75,7 @@ def install(args):
         shutil.copytree(ROOT / name, SUPPORT / name, symlinks=True, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__'))
     atomic(SUPPORT / 'deployment.enc.json', profile.read_bytes())
+    install_catalog()
     atomic(args.locked, json.dumps(locked, ensure_ascii=False).encode())
     settings = {'source': str(args.profile), 'locked': str(args.locked), 'core': str(args.core_config)}
     atomic(STATE, json.dumps(settings).encode())
@@ -123,6 +130,8 @@ def remove(args):
     for name in ('src', 'rules', '.venv'):
         shutil.rmtree(SUPPORT / name, ignore_errors=True)
     (SUPPORT / 'deployment.enc.json').unlink(missing_ok=True)
+    (SUPPORT / 'routes.enc.json').unlink(missing_ok=True)
+    (SUPPORT / 'routes.local.enc.json').unlink(missing_ok=True)
     (SUPPORT / '.local/node.enc').unlink(missing_ok=True)
     print('Original profile restored. LaunchAgent removed.')
 
@@ -160,6 +169,7 @@ def upgrade():
             if replaced:
                 ctl('kickstart', '-k', TARGET)
             raise
+    install_catalog()
     print('Updated the installed login service.')
 
 

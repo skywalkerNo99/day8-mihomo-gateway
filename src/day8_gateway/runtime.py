@@ -8,7 +8,7 @@ from pathlib import Path
 import signal
 import socket
 
-from . import adapter, controller, monitor as metrics, node_updates, verify
+from . import catalog, adapter, controller, monitor as metrics, node_updates, verify
 
 
 def control(root, command, **kwargs):
@@ -161,6 +161,8 @@ async def serve(payload, cfg, args, ready_fd=None):
                 result = {'ok': True, 'pid': os.getpid(), 'mode': 'adapter' if cfg is None else 'standalone',
                           'adapter_port': args.adapter_port, 'mihomo_pid': child.pid if child else None,
                           'mihomo_restarts': restarts, 'proxy_port': args.port if cfg else None}
+                if hasattr(args, 'update_key'):
+                    result['route_token'] = catalog.token(args.update_key, current_node.config)
             elif command == 'health':
                 result = await asyncio.to_thread(metrics.snapshot, *endpoint())
             elif command == 'apply-node' and hasattr(args, 'update_key'):

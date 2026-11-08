@@ -3,7 +3,17 @@ import SwiftUI
 
 private let support = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/Day8Gateway")
+private struct Route: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let available: Bool
+}
+
 private struct Reply: Decodable {
+    var activeID: String?
+    var activeName: String?
+    var routes: [Route]?
+    var delays: [String: Int]?
     struct Probe: Decodable { let online: Bool; let ms: Int? }
     var ok: Bool
     var nodes: [String: Probe]?
@@ -37,6 +47,13 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
 }
 
 @MainActor private final class Dashboard: ObservableObject {
+    @Published var savedRoutes = [Route]()
+    @Published var official: [VendorRoute]?
+    @Published var officialTime: Date?
+    @Published var activeID: String?
+    @Published var activeName: String?
+    @Published var delays = [String: Int]()
+    @Published var routeMessage = ""
     @Published var snapshot: Reply?
     @Published var checked: Date?
     @Published var busy = false
@@ -48,6 +65,53 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
     var identities = [String: String]()
     var listedContext = ""
     @Published var history = [String: [Int?]]()
+
+    var visibleRoutes: [Route] {
+        guard let official else { return savedRoutes }
+        let available = Set(savedRoutes.filter(\.available).map(\.id))
+        return official.map { Route(id: $0.id, name: $0.name, available: available.contains($0.id)) }
+    }
+
+    func readRoutes() async {
+        let reply = try? await runBridge(["routes"])
+        if let rows = reply?.routes { savedRoutes = rows }
+        activeID = reply?.activeID
+        activeName = reply?.activeName
+    }
+
+    func refreshOfficial() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        await readRoutes()
+        do {
+            official = try await Task.detached { try VendorPanel.read() }.value
+            officialTime = Date()
+            routeMessage = ""
+        } catch {
+            routeMessage = (error as? VendorPanel.Failure)?.rawValue ?? "读取官方面板失败。"
+        }
+    }
+
+    func manageRoutes(_ args: [String]) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        routeMessage = args.first == "route-delays" ? "正在逐条测试 HTTPS，最多同时测试四条。" : "正在验证线路…"
+        do {
+            let reply = try await runBridge(args)
+            if let samples = reply.delays { delays = samples }
+            if args.first == "import-routes" && reply.ok { delays = [:] }
+            await readRoutes()
+            if !reply.ok { routeMessage = "操作失败，请核对线路参数和住宅出口。"; return }
+            if args.first == "select-route" {
+                routeMessage = "已验证住宅出口，当前线路为 " + (activeName ?? "未知")
+                await refresh()
+            } else {
+                routeMessage = args.first == "route-delays" ? "测速完成。" : "已更新加密连接参数。"
+            }
+        } catch { routeMessage = "管理服务未响应，请检查后台服务。" }
+    }
 
     func refresh() async {
         guard !checking else { return }
@@ -116,6 +180,7 @@ private struct Panel: View {
             }
             Picker("视图", selection: $tab) {
                 Text("线路监测").tag(0)
+                Text("Day8 线路").tag(3)
                 Text("配置与账户").tag(1)
                 Text("Linux 容器").tag(2)
             }.pickerStyle(.segmented).labelsHidden()
@@ -123,7 +188,7 @@ private struct Panel: View {
                 ForEach([("Day8-native", "Day8", "第一跳 · Muon TCP"), ("Residual-egress", "1024proxy", "第二跳 · 经 Day8 的住宅出口")], id: \.0) { name, title, subtitle in
                     GroupBox {
                         HStack {
-                            VStack(alignment: .leading, spacing: 4) { Text(title).font(.headline); Text(subtitle).foregroundStyle(.secondary) }
+                            VStack(alignment: .leading, spacing: 4) { Text(name == "Day8-native" ? "Day8 · " + (model.activeName ?? "线路未知") : title).font(.headline); Text(subtitle).foregroundStyle(.secondary) }
                             Spacer()
                             let probe = model.snapshot?.nodes?[name]
                             HStack(alignment: .bottom, spacing: 2) {
@@ -146,6 +211,32 @@ private struct Panel: View {
                     Button("立即测速") { Task { await model.refresh() } }.disabled(model.checking)
                 }
                 if model.snapshot?.nodes == nil { Text("管理服务未就绪，当前没有测速结果。").foregroundStyle(.secondary) }
+            } else if tab == 3 {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("当前线路 · " + (model.activeName ?? "未知")).font(.headline)
+                        Spacer()
+                        Button("刷新官方列表") { Task { await model.refreshOfficial() } }
+                        Button("全部测速") { Task { await model.manageRoutes(["route-delays"]) } }
+                    }
+                    if let time = model.officialTime {
+                        Text("官方面板 · \(model.visibleRoutes.count) 条 · " + time.formatted(date: .omitted, time: .standard)).font(.caption)
+                    } else { Text("已保存的线路 · \(model.savedRoutes.count) 条").font(.caption) }
+                    List(model.visibleRoutes) { row in
+                        HStack {
+                            Text(row.name)
+                            if row.id == model.activeID { Text("使用中").foregroundStyle(.teal) }
+                            Spacer()
+                            if let ms = model.delays[row.id] { Text(ms < 0 ? "探测失败" : "HTTPS \(ms) ms").monospacedDigit() }
+                            else if let ms = model.official?.first(where: { $0.id == row.id })?.latency { Text("官方 \(ms) ms").monospacedDigit() }
+                            if row.available {
+                                Button("切换") { Task { await model.manageRoutes(["select-route", row.id]) } }
+                                    .disabled(row.id == model.activeID)
+                            } else { Text("缺少参数或维护中").font(.caption) }
+                        }
+                    }.frame(minHeight: 200)
+                    if !model.routeMessage.isEmpty { Text(model.routeMessage).font(.callout) }
+                }.disabled(model.busy)
             } else if tab == 1 {
                 Text("Day8 官方账户").font(.headline)
                 Text("节点在官方客户端内刷新。充值入口位于「账号 → 购买会员」。").foregroundStyle(.secondary)
@@ -154,6 +245,13 @@ private struct Panel: View {
                 Text("更新网关节点").font(.headline)
                 Text("选择 Muon 节点 JSON 或本项目的加密节点包。验证住宅出口后保存。").foregroundStyle(.secondary)
                 Button("读取官方客户端已刷新的配置") { Task { await model.action(["sync-official"]) } }.disabled(model.busy)
+                Button("导入账号线路列表 JSON…") {
+                    let panel = NSOpenPanel()
+                    if panel.runModal() == .OK, let url = panel.url {
+                        tab = 3
+                        Task { await model.manageRoutes(["import-routes", url.path]) }
+                    }
+                }.disabled(model.busy)
                 Button("选择更新文件…") {
                     let panel = NSOpenPanel()
                     panel.allowsMultipleSelection = false
@@ -189,12 +287,14 @@ private struct Panel: View {
         }
         .padding(22).frame(minWidth: 490, minHeight: 355)
         .task {
+            await model.readRoutes()
             if let reply = try? await runBridge(["contexts"]) {
                 contexts = reply.contexts ?? []
                 if context.isEmpty { context = reply.current ?? "default" }
             }
             while !Task.isCancelled {
                 if tab == 0 { await model.refresh() }
+                if tab == 0 || tab == 3 { await model.readRoutes() }
                 do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { return }
             }
         }
