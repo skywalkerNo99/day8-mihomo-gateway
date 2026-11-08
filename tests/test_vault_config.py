@@ -81,6 +81,14 @@ class RoutingTests(unittest.TestCase):
         self.assertNotIn('MATCH,old-vpn', cfg['rules'])
         self.assertIn('NETWORK,UDP,REJECT', cfg['rules'])
 
+    def test_existing_profile_with_null_optional_sections(self):
+        original = {'rule-providers': None, 'dns': None, 'sniffer': None, 'rules': ['MATCH,DIRECT']}
+        cfg = config.macos(fixture(), original, Path(__file__).resolve().parents[1] / 'rules', strict=True)
+        self.assertEqual(len(cfg['rule-providers']), 4)
+        self.assertTrue(cfg['dns']['enable'])
+        self.assertTrue(cfg['sniffer']['enable'])
+        self.assertIsNone(original['sniffer'])
+
 
 if __name__ == '__main__':
     unittest.main()

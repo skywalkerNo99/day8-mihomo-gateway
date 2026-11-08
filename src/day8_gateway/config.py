@@ -55,6 +55,10 @@ def native(payload,port=17890,adapter_port=17889,controller_port=17891,tun=False
 
 def macos(payload,original,rules_dir,adapter_port=17889,strict=False):
     validate(payload);cfg=copy.deepcopy(original)
+    # Existing Clash profiles may spell absent optional mappings as YAML null.
+    for field in ['rule-providers','dns','sniffer']:
+        if cfg.get(field)is None:cfg[field]={}
+        elif not isinstance(cfg[field],dict):raise ValueError('Invalid optional config mapping.')
     cfg['proxies']=[p for p in cfg.get('proxies',[])if p['name']not in [TRANSPORT,EGRESS]]+nodes(payload,adapter_port)
     providers={}
     for name,file in [('day8-apple','apple.yaml'),('day8-openai','openai.yaml'),('day8-dependencies','official-additions.yaml')]:
