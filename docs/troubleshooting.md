@@ -11,6 +11,7 @@
 | 本地运行失败 | 检查三个端口是否被占用、`.tools/mihomo -v` 是否可运行、同 checkout 是否已有监督进程；尝试前台 `run`。不要打印完整配置 |
 | status 连接失败 | 监督进程未运行，或 clone 路径太长超过系统 Unix socket 限制；使用更短目录。重启后必须再次解锁 |
 | macOS deploy 不生效 | 检查当前 profile、core-config、loopback controller 认证和 TUN 状态；没有 `--apply` 时只规划。UI/订阅重载会覆盖内存配置 |
+| 原配置含空值或 emoji 时加载失败 | 更新到当前修复版：可选 mapping 的 YAML null 会被规范化；传给核心的内层配置使用 UTF-8，不生成 YAML 不接受的 surrogate 转义。不要删除用户原有代理名称来绕过问题 |
 | macOS verify 失败 | 给 `--proxy` 指定主 Clash 的实际端口；adapter 模式没有独立 mixed-port。主机原代理与独立网关端口不要混淆 |
 | 出口不匹配 | verify 保留 `ok: false`，不要接受其他 IP。检查连接是否新建、是否进入目标核心、规则链与严格模式 |
 | HTTP/3/UDP 功能异常 | TCP-only 设计显式 REJECT；可让应用回退 TCP。不要删除 REJECT 造成默认出口泄漏 |

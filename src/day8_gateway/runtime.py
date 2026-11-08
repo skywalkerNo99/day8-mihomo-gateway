@@ -56,7 +56,7 @@ async def serve(payload, cfg, args, ready_fd=None):
             str(args.mihomo), '-d', str(directory), '-f', '/dev/stdin',
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL)
-        child.stdin.write(json.dumps(cfg).encode())
+        child.stdin.write(json.dumps(cfg, ensure_ascii=False).encode())
         await child.stdin.drain()
         child.stdin.close()
         await child.stdin.wait_closed()

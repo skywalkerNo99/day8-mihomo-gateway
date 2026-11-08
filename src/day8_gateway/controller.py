@@ -19,4 +19,6 @@ def request(url, secret, route, payload=None, method=None):
 
 
 def apply(url, secret, config):
-    return request(url, secret, '/configs?force=true', {'payload': json.dumps(config)}, 'PUT')
+    # Mihomo parses the inner document as YAML; UTF-16 surrogate escapes for
+    # emoji in existing proxy/group names are invalid YAML Unicode escapes.
+    return request(url, secret, '/configs?force=true', {'payload': json.dumps(config, ensure_ascii=False)}, 'PUT')

@@ -29,6 +29,7 @@ def main():
         args = Namespace(root=Path(tmp), port=port(), adapter_port=port(), controller_port=port(),
                          mihomo=ROOT / '.tools/mihomo')
         cfg = config.native(fixture(), args.port, args.adapter_port, args.controller_port)
+        cfg['proxy-groups'] = [{'name': '🌐 原有代理组', 'type': 'select', 'proxies': [config.EGRESS]}]
         runtime.start(fixture(), cfg, args, detach=True)
         try:
             first = runtime.control(args.root, 'status')
