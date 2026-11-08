@@ -1,0 +1,2 @@
+table <local_net> const { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 224.0.0.0/4, 255.255.255.255, ::1, fc00::/7, fe80::/10, ff00::/8 }
+block drop out quick on ! utun63 proto udp from any to ! <local_net> label "day8-public-udp"

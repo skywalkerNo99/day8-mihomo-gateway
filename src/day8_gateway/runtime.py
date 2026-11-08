@@ -13,7 +13,7 @@ from . import catalog, adapter, controller, monitor as metrics, node_updates, ve
 
 def control(root, command, **kwargs):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        timeouts = {'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
+        timeouts = {'verify-system-tun': 90, 'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
         sock.settimeout(timeouts.get(command, 5))
         sock.connect(str(Path(root) / '.local/control.sock'))
         sock.sendall(json.dumps({'command': command, **kwargs}).encode() + b'\n')
@@ -42,7 +42,11 @@ async def serve(payload, cfg, args, ready_fd=None):
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
     ready = asyncio.Event()
-    current_node = adapter.Muon(payload['day8'])
+    def make_node(node):
+        dial = getattr(args, 'uplink', None)
+        return adapter.Muon(node, dial=dial) if dial else adapter.Muon(node)
+
+    current_node = make_node(payload['day8'])
     task = asyncio.create_task(adapter.serve(payload['day8'], stop, port=args.adapter_port, ready=ready,
                                               current=lambda: current_node))
     update_lock = asyncio.Lock()
@@ -138,7 +142,7 @@ async def serve(payload, cfg, args, ready_fd=None):
             previous = current_node
             proxy = f"http://127.0.0.1:{live['mixed-port']}"
             try:
-                current_node = adapter.Muon(candidate)
+                current_node = make_node(candidate)
                 payload['day8'] = candidate
                 if cfg is None:
                     await asyncio.to_thread(macos_service.apply_policy, payload, args, url, secret)
@@ -170,6 +174,9 @@ async def serve(payload, cfg, args, ready_fd=None):
                 result = args.probes.status()
             elif command == 'probe-interval' and hasattr(args, 'probes'):
                 result = args.probes.configure(message['minutes'])
+            elif command == 'verify-system-tun' and hasattr(args, 'uplink'):
+                from . import tun_verify
+                result = await asyncio.to_thread(tun_verify.check, *endpoint(), payload['expected_exit_ip'])
             elif command == 'health':
                 result = await asyncio.to_thread(metrics.snapshot, *endpoint())
             elif command == 'apply-node' and hasattr(args, 'update_key'):

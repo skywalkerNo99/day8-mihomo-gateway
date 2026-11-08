@@ -54,15 +54,14 @@ def main(args):
         active = runtime.control(ROOT, 'status')['route_token']
         return {'ok': True, **catalog.summary(entries, key, active)}
     if action == 'health':
-        return runtime.control(ROOT, 'health')
+        result = runtime.control(ROOT, 'health')
+        if (ROOT / 'single-app.enabled').is_file():
+            from .tun_verify import interface
+            result['systemTunnel'] = interface('1.1.1.1')
+        return result
     if action == 'verify':
-        from .cli import core_settings
-        from .controller import request
-        from types import SimpleNamespace
-        settings = json.loads((ROOT / 'installation.json').read_text())
-        _, url, secret = core_settings(SimpleNamespace(core_config=settings['core']))
-        port = request(url, secret, '/configs')['mixed-port']
-        return runtime.control(ROOT, 'verify', proxy=f'http://127.0.0.1:{port}')
+        command = 'verify-system-tun' if (ROOT / 'single-app.enabled').is_file() else 'verify'
+        return {'ok': runtime.control(ROOT, command)['ok']}
     if action == 'contexts':
         rows = docker('default', 'context', 'ls', '--format', '{{.Name}}').splitlines()
         current = subprocess.run([shutil.which('docker'), 'context', 'show'], text=True, capture_output=True,

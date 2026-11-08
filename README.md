@@ -1,6 +1,6 @@
 # Day8 默认出口与住宅分流
 
-macOS 使用 Clash MetaX 自带的原生 mihomo，Linux 可独立运行 mihomo 或使用容器。两端使用同一份分流策略和原生 Muon 适配器。部署账户和节点参数保存在密码加密的 vault 中。
+macOS 可由 Day8 Gateway 原生接管整机 TUN，也支持接入已有的 ClashX Meta。Linux 可独立运行 mihomo 或使用容器。两端使用同一份分流策略和原生 Muon 适配器。部署账户和节点参数保存在密码加密的 vault 中。
 
 ## 开始部署
 
@@ -12,7 +12,7 @@ cd day8-mihomo-gateway
 python3 gateway bootstrap
 ```
 
-- **macOS 接入现有 Clash MetaX**：按 [macOS 原生部署](docs/macos.md) 操作。安装原生管理 App 和免密登录服务，可分别监测 Day8、1024proxy 及核验 ChatGPT 出口。
+- **macOS 单 App 或接入现有 Clash MetaX**：按 [macOS 原生部署](docs/macos.md) 操作。安装原生管理 App 和免密登录服务，可分别监测 Day8、1024proxy 及核验 ChatGPT 出口。
 - **Linux 或 macOS 独立网关**：按 [独立原生部署](docs/native.md) 操作。`./gateway run --detach` 解密后启动原生后台进程，默认仅监听 `127.0.0.1:17890`；不会自动切换整机网络。
 - **可选 Linux 容器**：[Linux 容器](docs/container.md)，仅用于需要容器的 Linux 环境或隔离验收。
 - **让模型接手部署**：先读 [AGENTS.md](AGENTS.md)，再按对应平台文档；不要向模型发送密码。

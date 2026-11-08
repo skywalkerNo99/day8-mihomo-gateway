@@ -23,6 +23,7 @@ private struct Reply: Decodable {
     var ok: Bool
     var nodes: [String: Probe]?
     var connections: Int?
+    var systemTunnel: String?
     var upload: Int?
     var download: Int?
     var targets: [String]?
@@ -171,7 +172,7 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
             let result = try await runBridge(args)
             switch args.first {
             case "verify":
-                exitStatus = result.ok ? "三次均匹配" : "核验失败"
+                exitStatus = result.ok ? "出口匹配" : "核验失败"
             case "targets":
                 listedContext = args[1]
                 identities = result.identities ?? [:]
@@ -399,6 +400,10 @@ private struct Panel: View {
                 Text("Linux 容器").tag(2)
             }.pickerStyle(.segmented).labelsHidden()
             if tab == 0 {
+                if let device = model.snapshot?.systemTunnel {
+                    Label(device == "utun63" ? "整机 TUN 已接管 · " + device : "整机路由待检查 · " + device,
+                          systemImage: device == "utun63" ? "network" : "exclamationmark.triangle")
+                }
                 ForEach([("Day8-native", "Day8", "第一跳 · Muon TCP"), ("Residual-egress", "1024proxy", "第二跳 · 经 Day8 的住宅出口")], id: \.0) { name, title, subtitle in
                     GroupBox {
                         HStack {
@@ -419,7 +424,7 @@ private struct Panel: View {
                 HStack { Text("ChatGPT 住宅出口"); Spacer(); Text(model.exitStatus); Button("核验出口") { Task { await model.action(["verify"]) } }.disabled(model.busy) }
                 Divider()
                 HStack {
-                    if let count = model.snapshot?.connections { Text("Clash 活跃连接  \(count)").monospacedDigit() }
+                    if let count = model.snapshot?.connections { Text("活跃连接  \(count)").monospacedDigit() }
                     Spacer()
                     if let date = model.checked { Text(date, style: .time).foregroundStyle(.secondary) }
                     Button("立即测速") { Task { await model.refresh() } }.disabled(model.checking)

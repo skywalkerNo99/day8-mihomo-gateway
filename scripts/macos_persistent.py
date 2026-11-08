@@ -114,6 +114,8 @@ def install(args):
 
 
 def remove(args):
+    if (SUPPORT / 'single-app.enabled').exists():
+        raise SystemExit('Restore the single-app TUN first using scripts/macos_takeover.py rollback.')
     settings = json.loads(STATE.read_text())
     args.core_config = Path(settings['core'])
     _, url, secret = core_settings(args)

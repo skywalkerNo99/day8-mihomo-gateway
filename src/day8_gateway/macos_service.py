@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from . import config, controller, macos_keychain, node_updates, runtime, scheduled_probes
+from . import config, controller, macos_keychain, node_updates, runtime, scheduled_probes, single_app
 from .cli import core_settings, read_yaml
 
 LOCK = 'Day8-Startup-Locked'
@@ -54,13 +54,23 @@ async def supervise(payload, args):
 
     args.probes = scheduled_probes.ProbeSchedule(args.root, args.update_key)
     timer = asyncio.create_task(args.probes.run())
-    monitor = asyncio.create_task(watch())
+    monitor = None
     try:
-        await runtime.serve(payload, None, args)
+        if (args.root / 'single-app.enabled').is_file():
+            args.port = single_app.PORT
+            args.controller_port = single_app.CONTROLLER
+            args.mihomo = args.root / 'mihomo'
+            args.uplink = single_app.Uplink()
+            cfg = single_app.routing(payload, args.update_key, args.adapter_port)
+        else:
+            cfg = None
+            monitor = asyncio.create_task(watch())
+        await runtime.serve(payload, cfg, args)
     finally:
-        monitor.cancel()
-        timer.cancel()
-        await asyncio.gather(timer, monitor, return_exceptions=True)
+        tasks = [timer] if monitor is None else [timer, monitor]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def main():
