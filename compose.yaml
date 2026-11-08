@@ -20,11 +20,27 @@ services:
     <<: *gateway-image
     command: [run, --bind, 0.0.0.0, --auto-unlock]
     restart: unless-stopped
+    networks:
+      protected: {}
+      uplink:
+        gw_priority: 1
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.all.forwarding: "0"
     ports:
       - "127.0.0.1:17890:17890"
     volumes:
       - ./secrets:/app/secrets:ro
       - unlock:/var/lib/day8-unlock:ro
+
+networks:
+  # Business containers requiring fail-closed egress attach only here.
+  protected:
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  uplink: {}
 
 volumes:
   unlock:

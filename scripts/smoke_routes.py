@@ -130,7 +130,8 @@ def run(binary):
                 for _ in range(100):
                     try:
                         providers = controller.request(f'http://127.0.0.1:{api_port}', cfg['secret'], '/providers/rules')
-                        if all(providers['providers'].get(name, {}).get('ruleCount', 0) > 0
+                        loaded = providers.get('providers') or {}
+                        if all((loaded.get(name) or {}).get('ruleCount', 0) > 0
                                for name in cfg['rule-providers']) and probe(port, 'apple.com') == 'two apple.com':
                             break
                         time.sleep(.05)

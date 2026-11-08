@@ -54,3 +54,7 @@ python3 scripts/audit.py
 在独立回环核心经新策略访问 ChatGPT 的 HTTPS trace 一次，TLS 请求成功，主机名和预期出口一致。另通过独立 Muon 到住宅入口，用户名密码认证成功，对 UDP ASSOCIATE 收到 SOCKS5 回复码 0x09。这次没有建立住宅 UDP 中继，也没有确认 UDP 出口。临时核心已退出，未将此策略应用到系统 TUN。
 
 本机主 Clash 复核为原有 44 条规则、TUN 开启、mixed-port 7890。规则、profile、系统代理均与试验前基线相同。
+
+## Linux 业务容器 UDP 隔离验收
+
+在 Docker Engine 28.4 的独立 Compose 项目使用合成凭据和临时网络实测。出口侧对照容器向 UDP 接收端发送探测并收到回显。只接入内部网络的业务容器可以访问网关 SOCKS 入口，分别指定 ChatGPT、OpenAI、Apple 域名的 UDP 请求均未收到回包。业务容器尝试直接向出口侧接收端、IPv4 和 IPv6 测试地址发送 UDP，内核均拒绝发送；停止网关后结果相同。接收端仅记录了对照探测。此范围要求业务容器只连接 protected 网络。

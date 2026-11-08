@@ -24,7 +24,7 @@ python3 gateway bootstrap
 | Apple、ChatGPT/OpenAI 的专用域名和已收录的 Apple 网段 | mihomo → Day8 → 住宅代理 → 目标 |
 | 其他域名和公网 IP，包括国内站点及共享第三方域名 | mihomo → Day8 → 目标 |
 
-当前 Muon 适配器仅实现 TCP。两类公网 UDP 均显式拒绝。现阶段可在独立回环端口验证 TCP，默认分流的整机切换等待第一跳与住宅第二跳的 UDP 数据报均通过验收。详见 [路由与验证](docs/routing.md)。
+当前 Muon 适配器仅实现 TCP。两类公网 UDP 均显式拒绝。Linux 上要求受保护的业务容器只连接 `day8_protected`，使忽略代理的 UDP 也无法直发公网。现阶段可在独立回环端口验证 TCP，默认分流的整机切换等待第一跳与住宅第二跳的 UDP 数据报均通过验收。详见 [路由与验证](docs/routing.md)。
 
 ## 加密与运行
 

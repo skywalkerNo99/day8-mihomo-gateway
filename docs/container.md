@@ -10,7 +10,30 @@ docker compose up -d day8-gateway
 
 第二条命令在终端隐藏提示 vault 密码。它验证凭据，然后把仅适用于这份 vault 的解密密钥写入该 Docker 主机的专用卷。第三条命令后台启动代理，以后重启容器或重新创建服务都从只读卷解锁。Docker 服务随主机启动且容器此前处于运行状态时，`restart: unless-stopped` 会把它重新拉起。手动停止后用 `docker compose up -d` 启动。
 
-宿主机应用使用 `127.0.0.1:17890`。接入同一 Compose 网络（默认 `day8_default`）的业务容器使用 `day8-gateway:17890`。该端口服务于显式配置代理的应用，当前公网转发支持 TCP。已有手动部署占用宿主机 17890 时，先完成 enroll，再于切换时停止对应旧容器或给新服务选择另一个宿主端口。
+### 业务容器的 UDP 出口限制
+
+本配置使用 Docker Engine 28+、Compose 2.33.1+。网关同时连接内部网络 `day8_protected` 和出口网络 `day8_uplink`。要求 UDP 不绕行的业务容器**只接入内部网络**，其应用代理设为 `http://day8-gateway:17890`。内部网络关闭 IPv6 且不设宿主桥接网关地址，网关容器关闭 IP 转发。忽略代理的应用无法经默认路由直接访问公网。当前网关对所有公网 UDP 拒绝，覆盖未知 IP、QUIC 和自定义 UDP 端口；支持的公网 TCP 继续按规则分流。
+
+在业务容器自己的 Compose 文件中，把下面的网络设置合并到实际服务，替换原有公网网络。代理环境变量适用于支持它们的应用。
+
+```yaml
+services:
+  app:
+    # 保留业务自己的 image、command 等设置。
+    networks: [protected]
+    environment:
+      HTTPS_PROXY: http://day8-gateway:17890
+      HTTP_PROXY: http://day8-gateway:17890
+
+networks:
+  protected:
+    external: true
+    name: day8_protected
+```
+
+升级的顺序是先在网关项目执行 `docker compose up -d --build`，再用更新后的业务 Compose 重建业务容器。用 `docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 容器名` 核对只列出 `day8_protected`。如果改过网关 Compose 项目名，使用相应的网络名前缀。旧 `day8_default`、普通 bridge、host 网络和额外出口都会绕过这层隔离。内部网络只连接受管业务和这个代理，不接入其他转发器。
+
+宿主机也可显式访问 `127.0.0.1:17890`，业务容器的网络隔离仅约束接入内部网络的容器。已有手动部署占用宿主机 17890 时，完成 enroll 后在切换时停止对应旧容器，或选择另一个宿主端口。
 
 ```sh
 docker compose restart day8-gateway

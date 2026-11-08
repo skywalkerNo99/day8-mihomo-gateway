@@ -77,6 +77,13 @@ class RoutingTests(unittest.TestCase):
             index = cfg['rules'].index(f'RULE-SET,{name},Residual-egress{suffix}')
             self.assertEqual(cfg['rules'][index+1], f'RULE-SET,{name},REJECT{suffix}')
         self.assertEqual(cfg['dns']['nameserver'], ['https://1.1.1.1/dns-query#Day8-native'])
+    def test_tun_blocks_residential_udp_before_lan_direct(self):
+        for cfg in (config.native(fixture(), tun=True),
+                    config.macos(fixture(), {'tun': {'enable': True}}, config.RULES_DIR, strict=True)):
+            rules = cfg['rules']
+            guard = rules.index('AND,((NETWORK,UDP),(RULE-SET,residential-domains)),REJECT')
+            self.assertTrue(all(guard < index for index, rule in enumerate(rules) if ',DIRECT' in rule))
+
     def test_strict_cannot_fall_back_to_old_vpn(self):
         cfg = config.macos(fixture(), {'rules': ['MATCH,old-vpn']}, Path(__file__).resolve().parents[1] / 'rules', strict=True)
         self.assertEqual(cfg['rules'][-2:], ['MATCH,Residual-egress', 'MATCH,REJECT'])

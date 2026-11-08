@@ -60,6 +60,9 @@ def apply_routes(cfg, payload, adapter_port, rules_dir, strict=False):
     has_tun = (cfg.get('tun') or {}).get('enable')
     rules = []
     if has_tun:
+        # A protected hostname can resolve to a private IP (split DNS or hosts).
+        # Reject its UDP before a TUN-local DIRECT exception can match.
+        rules.append('AND,((NETWORK,UDP),(RULE-SET,residential-domains)),REJECT')
         rules.append(bootstrap(payload))
         for subnet in LOCAL_NETS:
             kind = 'IP-CIDR6' if ':' in subnet else 'IP-CIDR'
