@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from . import config, node_updates
 
 KINDS = {'exact': 'DOMAIN', 'suffix': 'DOMAIN-SUFFIX', 'keyword': 'DOMAIN-KEYWORD'}
-TARGETS = (config.TRANSPORT, config.EGRESS, 'REJECT')
+TARGETS = (config.TRANSPORT, config.EGRESS, 'DIRECT', 'REJECT')
 AAD = b'day8-local-domain-policy-v1'
 LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?')
 
@@ -40,6 +40,7 @@ class Policy:
         self.path = path
         self.key = key
         self.base = list(cfg['rules'])
+        self.proxies = list(cfg['proxies'])
         self.builtin = cfg['rule-providers']['residential-domains']['payload']
         self.rows = []
         if path.exists():
@@ -94,13 +95,23 @@ class Policy:
                 return host
         return None
 
-    def rules(self, rows):
+    def render(self, rows, interface):
+        proxies = list(self.proxies)
+        if interface and any(row['target'] == 'DIRECT' for row in rows):
+            proxies.append({'name': 'Physical-direct', 'type': 'direct', 'udp': False,
+                            'interface-name': interface})
+        return {'proxies': proxies, 'rules': self.rules(rows, interface)}
+
+    def rules(self, rows, interface=None):
         # Built-in residential rules and UDP rejection always precede local overrides.
         result = list(self.base[:-2])
         for row in rows:
             prefix = KINDS[row['kind']] + ',' + row['value'] + ','
-            result.append(prefix + row['target'])
-            if row['target'] != 'REJECT':
+            target = row['target']
+            if target == 'DIRECT':
+                target = 'Physical-direct' if interface else 'REJECT'
+            result.append(prefix + target)
+            if target != 'REJECT':
                 result.append(prefix + 'REJECT')
         return result + self.base[-2:]
 

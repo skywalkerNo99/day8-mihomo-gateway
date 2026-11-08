@@ -63,14 +63,25 @@ def save_export(source, profile, target, key, base):
     return len(entries)
 
 
-def uplink_index():
+def uplink_name():
     if sys.platform != 'darwin':
         return None
-    report = subprocess.run(['/usr/sbin/scutil', '--nwi'], capture_output=True, text=True, timeout=3)
-    for name in re.findall(r'^\s*([a-z]+[0-9]+) : flags', report.stdout, re.MULTILINE):
-        if name.startswith(('en', 'bridge', 'pdp_ip')):
-            return socket.if_nametoindex(name)
+    try:
+        report = subprocess.run(['/usr/sbin/scutil', '--nwi'], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    for name in re.findall(r'^\s*([a-z_]+[0-9]+) : flags', report.stdout, re.MULTILINE):
+        if re.fullmatch(r'(?:en|bridge|pdp_ip)[0-9]+', name):
+            return name
     return None
+
+
+def uplink_index():
+    name = uplink_name()
+    try:
+        return socket.if_nametoindex(name) if name else None
+    except OSError:
+        return None
 
 
 async def dial_probe(host, port, interface):

@@ -43,12 +43,30 @@ class RulesTests(unittest.TestCase):
             policy.persist(rows)
             self.assertEqual(policy.ordinary_probe(), 'example.com')
 
+    def test_direct_is_scoped_and_stays_after_protections(self):
+        cfg = config.native(fixture())
+        with TemporaryDirectory() as tmp:
+            policy = domain_policy.Policy(cfg, Path(tmp) / 'rules.enc', bytes(32))
+            rows = [domain_policy.rule('suffix', 'example.com', 'DIRECT')]
+            for interface in ('en0', 'en6', None):
+                parts = policy.render(rows, interface)
+                route = 'Physical-direct' if interface else 'REJECT'
+                rules = parts['rules']
+                idx = rules.index('DOMAIN-SUFFIX,example.com,' + route)
+                self.assertIn('NETWORK,UDP,REJECT', rules[:idx])
+                self.assertIn('RULE-SET,residential-domains,Residual-egress', rules[:idx])
+                self.assertNotIn('DOMAIN-SUFFIX,example.com,DIRECT', rules)
+                self.assertEqual(parts['proxies'][len(cfg['proxies']):], [
+                    {'name': route, 'type': 'direct', 'interface-name': interface, 'udp': False}
+                ] if interface else [])
+                self.assertEqual(policy.render([], interface), {'proxies': cfg['proxies'], 'rules': cfg['rules']})
+
     def test_rule_injection_and_ip_rejected(self):
         for value in ('foo,MATCH,DIRECT', 'a/b', 'https://example.com', '1.1.1.1', '*.x', '-bad', 'a..b'):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 domain_policy.rule('exact', value, 'Day8-native')
         with self.assertRaises(ValueError):
-            domain_policy.rule('keyword', 'safe', 'DIRECT')
+            domain_policy.rule('keyword', 'safe', 'GLOBAL')
 
 
 class JournalTests(unittest.TestCase):

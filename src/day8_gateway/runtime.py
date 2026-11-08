@@ -47,9 +47,15 @@ async def serve(payload, cfg, args, ready_fd=None):
         return adapter.Muon(node, dial=dial) if dial else adapter.Muon(node)
 
     policy = journal = None
+    async def rendered(rows):
+        interface = None
+        if any(row['target'] == 'DIRECT' for row in rows):
+            interface = await asyncio.to_thread(catalog.uplink_name)
+        return policy.render(rows, interface)
+
     if getattr(args, 'uplink', None) and cfg:
         policy = domain_policy.Policy(cfg, local / 'domain-rules.enc', args.update_key)
-        cfg['rules'] = policy.rules(policy.rows)
+        cfg.update(await rendered(policy.rows))
         journal = metrics.DomainJournal()
 
     current_node = make_node(payload['day8'])
@@ -58,7 +64,7 @@ async def serve(payload, cfg, args, ready_fd=None):
     update_lock = asyncio.Lock()
     child = None
     listener = None
-    monitor = None
+    monitor = uplink_monitor = None
     socket_path = local / 'control.sock'
     restarts = 0
 
@@ -137,6 +143,17 @@ async def serve(payload, cfg, args, ready_fd=None):
         _, url, secret = core_settings(args)
         return url, secret
 
+    async def watch_direct_interface():
+        while not stop.is_set():
+            await asyncio.sleep(5)
+            async with update_lock:
+                if not any(row['target'] == 'DIRECT' for row in policy.rows):
+                    continue
+                parts = await rendered(policy.rows)
+                if parts['proxies'] != cfg['proxies']:
+                    await asyncio.to_thread(controller.apply, *endpoint(), {**cfg, **parts})
+                    cfg.update(parts)
+
     async def apply_node(packet):
         nonlocal current_node
         from . import macos_service
@@ -199,7 +216,8 @@ async def serve(payload, cfg, args, ready_fd=None):
                     except ValueError as exc:
                         result = {'ok': False, 'error': str(exc)}
                     else:
-                        updated = dict(cfg, rules=policy.rules(rows))
+                        parts = await rendered(rows)
+                        updated = {**cfg, **parts}
                         try:
                             await asyncio.to_thread(controller.apply, *endpoint(), updated)
                             policy.persist(rows)
@@ -209,7 +227,7 @@ async def serve(payload, cfg, args, ready_fd=None):
                             except Exception:
                                 stop.set()  # launchd reloads the last persisted policy.
                             raise
-                        cfg['rules'] = updated['rules']
+                        cfg.update(parts)
                         result = policy.snapshot()
             elif command == 'health':
                 result = await asyncio.to_thread(metrics.snapshot, *endpoint())
@@ -256,6 +274,8 @@ async def serve(payload, cfg, args, ready_fd=None):
         if cfg is not None:
             await spawn()
             monitor = asyncio.create_task(watch())
+        if policy is not None:
+            uplink_monitor = asyncio.create_task(watch_direct_interface())
         if socket_path.exists():
             socket_path.unlink()
         listener = await asyncio.start_unix_server(connection, path=str(socket_path), limit=node_updates.LIMIT + 512)
@@ -267,7 +287,7 @@ async def serve(payload, cfg, args, ready_fd=None):
         else:
             print('Native gateway ready. Ctrl-C stops it; host routing was not changed.', flush=True)
         stop_task = asyncio.create_task(stop.wait())
-        watched = [stop_task, task] + ([monitor] if monitor else [])
+        watched = [t for t in (stop_task, task, monitor, uplink_monitor) if t is not None]
         done, _ = await asyncio.wait(watched, return_when=asyncio.FIRST_COMPLETED)
         for done_task in done:
             done_task.result()
@@ -277,6 +297,9 @@ async def serve(payload, cfg, args, ready_fd=None):
             with contextlib.suppress(OSError):
                 os.write(ready_fd, b'ERROR\n')
                 os.close(ready_fd)
+        if uplink_monitor:
+            uplink_monitor.cancel()
+            await asyncio.gather(uplink_monitor, return_exceptions=True)
         if listener:
             listener.close()
             await listener.wait_closed()

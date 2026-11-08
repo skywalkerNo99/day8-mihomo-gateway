@@ -32,11 +32,13 @@ def snapshot(url, secret):
 
 
 def connection_line(line, hidden):
-    match = re.search(r'\[(TCP|UDP)\]\s+\S+\s+-->\s+([a-zA-Z0-9.:_\[\]-]{1,270})\s+.*?\busing\s+(Day8-native|Residual-egress|REJECT|DIRECT)\b', line)
+    match = re.search(r'\[(TCP|UDP)\]\s+\S+\s+-->\s+([a-zA-Z0-9.:_\[\]-]{1,270})\s+.*?\busing\s+(Day8-native|Residual-egress|REJECT|DIRECT|Physical-direct)\b', line)
     if match:
         network, target, route = match.groups()
         if any(host.lower() in target.lower() for host in hidden):
             target = '<upstream>'
+        if route == 'Physical-direct':
+            route = 'DIRECT'
         return f'[{network}] {target} via {route}'
 
 
@@ -57,13 +59,15 @@ class DomainJournal:
             rule_name = matched[1] if matched else None
         else:
             # Dial errors may contain proxy endpoints and diagnostics. Retain only safe fields.
-            failure = re.search(r'\[(TCP|UDP)\] dial (Day8-native|Residual-egress|REJECT) '
+            failure = re.search(r'\[(TCP|UDP)\] dial (Day8-native|Residual-egress|REJECT|Physical-direct) '
                                 r'\(match ([\w.(),:+/-]{1,300})\) \S+ --> ([a-zA-Z0-9.:_\[\]-]{1,270}) ', line)
             if not failure:
                 return
             protocol, route, rule_name, target = failure.groups()
             if any(h.lower() in target.lower() for h in hidden):
                 return
+            if route == 'Physical-direct':
+                route = 'DIRECT'
             network = '[' + protocol + ']'
             outcome = 'failed'
         host, sep, port = target.rpartition(':')

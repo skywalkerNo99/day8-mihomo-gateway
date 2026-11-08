@@ -17,12 +17,13 @@ struct ConnectionEvent: Decodable, Identifiable {
     let outcome: String?
 }
 
-private let targets = ["Day8-native", "Residual-egress", "REJECT"]
+private let targets = ["Day8-native", "Residual-egress", "DIRECT", "REJECT"]
 private let kinds = ["exact", "suffix", "keyword"]
 private func label(_ key: String) -> String {
     switch key {
     case "Day8-native": return "Day8"
     case "Residual-egress": return "Day8 → 1024"
+    case "DIRECT": return "DIRECT · 直连"
     case "REJECT": return "拒绝"
     case "exact": return "精确域名"
     case "suffix": return "域名后缀"
