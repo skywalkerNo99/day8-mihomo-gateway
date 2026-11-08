@@ -14,6 +14,11 @@ private struct Reply: Decodable {
     var activeName: String?
     var routes: [Route]?
     var delays: [String: Int]?
+    var minutes: Int?
+    var running: Bool?
+    var measuredAt: Double?
+    var origin: String?
+    var probeFailed: Bool?
     struct Probe: Decodable { let online: Bool; let ms: Int? }
     var ok: Bool
     var nodes: [String: Probe]?
@@ -56,6 +61,10 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
     @Published var routeMessage = ""
     @Published var measuringRoutes = false
     @Published var measuredAt: Date?
+    @Published var interval: Int?
+    @Published var scheduledRunning = false
+    @Published var lastOrigin: String?
+    @Published var probeFailed = false
     @Published var snapshot: Reply?
     @Published var checked: Date?
     @Published var busy = false
@@ -81,6 +90,29 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
         activeName = reply?.activeName
     }
 
+    func displaySchedule(_ reply: Reply) {
+        guard let minutes = reply.minutes else { return }
+        interval = minutes
+        scheduledRunning = reply.running ?? false
+        measuredAt = reply.measuredAt.map(Date.init(timeIntervalSince1970:))
+        delays = reply.delays ?? [:]
+        lastOrigin = reply.origin
+        probeFailed = reply.probeFailed ?? false
+    }
+
+    func readSchedule() async {
+        if let reply = try? await runBridge(["probe-status"]), reply.ok { displaySchedule(reply) }
+    }
+
+    func setInterval(_ minutes: Int) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        if let reply = try? await runBridge(["probe-interval", String(minutes)]), reply.ok {
+            displaySchedule(reply)
+        } else { routeMessage = "保存定时间隔失败，请检查登录服务。" }
+    }
+
     func refreshOfficial() async {
         guard !busy else { return }
         busy = true
@@ -103,7 +135,7 @@ private func runBridge(_ arguments: [String]) async throws -> Reply {
         routeMessage = measuringRoutes ? "" : "正在验证线路…"
         do {
             let reply = try await runBridge(args)
-            if reply.ok, let samples = reply.delays { delays = samples; measuredAt = Date() }
+            if args.first == "route-delays" { displaySchedule(reply) }
             if args.first == "import-routes" && reply.ok { delays = [:]; measuredAt = nil }
             await readRoutes()
             if !reply.ok { routeMessage = "操作失败，请核对线路参数和住宅出口。"; return }
@@ -287,8 +319,8 @@ private struct RouteMeasurements: View {
                 }.labelsHidden().fixedSize()
                 Button("刷新官方列表") { Task { await model.refreshOfficial() } }.disabled(model.busy)
                 Button { Task { await model.manageRoutes(["route-delays"]) } } label: {
-                    Label(model.measuringRoutes ? "测速中…" : "全部测速", systemImage: "waveform.path.ecg")
-                }.buttonStyle(.borderedProminent).disabled(model.busy)
+                    Label((model.measuringRoutes || model.scheduledRunning) ? "测速中…" : "全部测速", systemImage: "waveform.path.ecg")
+                }.buttonStyle(.borderedProminent).disabled(model.busy || model.scheduledRunning)
             }
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
@@ -314,12 +346,35 @@ private struct RouteMeasurements: View {
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.secondary.opacity(0.2)))
             HStack {
-                if model.measuringRoutes { ProgressView().controlSize(.small); Text("正在探测 · 最多 4 条并发") }
-                else if let time = model.measuredAt { Text("上次测速 " + time.formatted(date: .omitted, time: .standard)) }
+                if model.measuringRoutes || model.scheduledRunning { ProgressView().controlSize(.small); Text("正在探测 · 最多 4 条并发") }
+                else if model.probeFailed { Text("上次探测未完成").foregroundStyle(.orange) }
+                else if let time = model.measuredAt {
+                    Text((model.lastOrigin == "scheduled" ? "后台测速 " : "手动测速 ") + time.formatted(date: .abbreviated, time: .standard))
+                }
                 Spacer()
+                Menu {
+                    ForEach([0, 5, 15, 30, 60], id: \.self) { minutes in
+                        Button {
+                            Task { await model.setInterval(minutes) }
+                        } label: {
+                            let title = minutes == 0 ? "关闭" : "每 " + String(minutes) + " 分钟"
+                            if model.interval == minutes { Label(title, systemImage: "checkmark") }
+                            else { Text(title) }
+                        }
+                    }
+                } label: {
+                    Label(model.interval.map { $0 == 0 ? "定时测速已关闭" : "每 " + String($0) + " 分钟测速" } ?? "后台定时测速",
+                          systemImage: "clock")
+                }.fixedSize().disabled(model.busy)
                 Text(model.officialTime.map { "官方列表 " + $0.formatted(date: .omitted, time: .standard) } ?? "本机加密目录")
             }.font(.caption).foregroundStyle(.secondary)
             if !model.routeMessage.isEmpty { Text(model.routeMessage).font(.callout).textSelection(.enabled) }
+        }
+        .task {
+            while !Task.isCancelled {
+                await model.readSchedule()
+                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+            }
         }
     }
 }

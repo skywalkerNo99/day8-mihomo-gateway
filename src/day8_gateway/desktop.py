@@ -1,5 +1,4 @@
 """Local bridge for the macOS app. Never return decrypted profiles to the GUI."""
-import asyncio
 import json
 from pathlib import Path
 import re
@@ -35,13 +34,15 @@ def send_packet(context, target, packet):
 
 def main(args):
     action, *params = args
-    if action in ('routes', 'select-route', 'route-delays', 'import-routes'):
+    if action in ('probe-status', 'route-delays'):
+        return runtime.control(ROOT, action)
+    if action == 'probe-interval':
+        return runtime.control(ROOT, action, minutes=int(params[0]))
+    if action in ('routes', 'select-route', 'import-routes'):
         key = macos_keychain.read_key(BASE)
         if action == 'import-routes':
             catalog.save_export(Path(params[0]), BASE, ROOT / 'routes.local.enc.json', key, macos_keychain.unlock(BASE))
         entries = catalog.read(ROOT, key)
-        if action == 'route-delays':
-            return {'ok': True, 'delays': asyncio.run(catalog.probe_routes(entries))}
         if action == 'select-route':
             entry = next((e for e in entries if e['id'] == params[0]), None)
             if not entry or not entry['node'] or entry['maintenance']:

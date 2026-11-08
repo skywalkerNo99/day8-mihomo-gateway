@@ -1,11 +1,10 @@
 """Run Muon and restore the unlocked policy when Clash loads its startup profile."""
 import argparse
 import asyncio
-from contextlib import suppress
 import logging
 from pathlib import Path
 
-from . import config, controller, macos_keychain, node_updates, runtime
+from . import config, controller, macos_keychain, node_updates, runtime, scheduled_probes
 from .cli import core_settings, read_yaml
 
 LOCK = 'Day8-Startup-Locked'
@@ -53,13 +52,15 @@ async def supervise(payload, args):
                 pass  # The GUI and its controller can start after the login agent.
             await asyncio.sleep(2)
 
+    args.probes = scheduled_probes.ProbeSchedule(args.root, args.update_key)
+    timer = asyncio.create_task(args.probes.run())
     monitor = asyncio.create_task(watch())
     try:
         await runtime.serve(payload, None, args)
     finally:
         monitor.cancel()
-        with suppress(asyncio.CancelledError):
-            await monitor
+        timer.cancel()
+        await asyncio.gather(timer, monitor, return_exceptions=True)
 
 
 def main():

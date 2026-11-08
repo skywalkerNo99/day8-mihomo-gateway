@@ -13,7 +13,8 @@ from . import catalog, adapter, controller, monitor as metrics, node_updates, ve
 
 def control(root, command, **kwargs):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        sock.settimeout(160 if command in ('verify', 'apply-node', 'health') else 5)
+        timeouts = {'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
+        sock.settimeout(timeouts.get(command, 5))
         sock.connect(str(Path(root) / '.local/control.sock'))
         sock.sendall(json.dumps({'command': command, **kwargs}).encode() + b'\n')
         chunks = b''
@@ -163,6 +164,12 @@ async def serve(payload, cfg, args, ready_fd=None):
                           'mihomo_restarts': restarts, 'proxy_port': args.port if cfg else None}
                 if hasattr(args, 'update_key'):
                     result['route_token'] = catalog.token(args.update_key, current_node.config)
+            elif command == 'route-delays' and hasattr(args, 'probes'):
+                result = await args.probes.measure('manual')
+            elif command == 'probe-status' and hasattr(args, 'probes'):
+                result = args.probes.status()
+            elif command == 'probe-interval' and hasattr(args, 'probes'):
+                result = args.probes.configure(message['minutes'])
             elif command == 'health':
                 result = await asyncio.to_thread(metrics.snapshot, *endpoint())
             elif command == 'apply-node' and hasattr(args, 'update_key'):

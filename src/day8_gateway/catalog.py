@@ -137,7 +137,7 @@ async def probe(entry, interface):
 
 async def probe_routes(entries):
     limit = asyncio.Semaphore(4)
-    interface = uplink_index()
+    interface = await asyncio.to_thread(uplink_index)
 
     async def measure(entry):
         async with limit:
