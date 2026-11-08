@@ -44,16 +44,6 @@ curl --noproxy '' --proxy http://127.0.0.1:17890 https://chatgpt.com/cdn-cgi/tra
 
 前台调试可用 `./gateway run`，按 Ctrl-C 停止。日志不打印完整配置。不要通过环境变量、shell 脚本或 service unit 保存密码。
 
-## Linux 整机 TUN（可选，显式切换）
+## 整机 TUN
 
-只有用户明确要求整机接管时才做。先验证普通本地代理可用；确认没有其他正在管理路由的 TUN。需要 `/dev/net/tun` 和 root 或等效权限。bootstrap 先以普通用户完成，再从交互终端运行：
-
-```sh
-sudo ./gateway run --tun
-```
-
-输入系统授权密码与 vault 密码，二者都不发给模型。前台运行便于 Ctrl-C 回退。启动参数会启用 Mihomo auto-route 和 DNS hijack；Day8 节点的 bootstrap DIRECT 规则避免自环，私有 IPv4 地址直连，所有其余 TCP 走 residual、UDP 拒绝。
-
-停止后核对 TUN/默认路由已撤销；若进程被 SIGKILL 导致残留，按发行版与 Mihomo 文档清理残留接口/路由，不能盲删系统默认路由。IPv6 在生成配置中关闭；不要据此假设系统自身 IPv6 一定被所有版本 TUN 完整接管，应额外核对或显式禁用系统 IPv6。
-
-macOS 独立 TUN 也需要系统授权及适合的签名/网络权限，优先采用已有客户端管理的 TUN 接入方式。不要同时启用两套 TUN。
+当前适配器仅实现 TCP，`run --tun` 会在启动前报告阻塞原因。待两条路径完成 UDP 验收后，还要在目标主机核对 IPv4/IPv6 路由、DNS 劫持和系统代理例外。Linux 容器发布 TCP mixed-port 适用于当前隔离验证。

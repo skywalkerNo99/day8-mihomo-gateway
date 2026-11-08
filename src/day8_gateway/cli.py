@@ -78,6 +78,10 @@ def main():
     args.root = ROOT
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(message)s')
 
+    if (args.command == 'macos' and args.action == 'deploy' and args.apply and not args.strict
+            or args.command == 'run' and args.tun):
+        raise UserError('当前 Muon 适配器仅支持 TCP，尚不能部署要求 UDP 的整机分流。请用 run 在回环验证。')
+
     if args.command == 'seal':
         if args.vault.exists():
             raise UserError('加密文件已存在；修改密码请使用 rekey，或用 --vault 指定新的保存位置。')
@@ -134,8 +138,8 @@ def main():
         cfg['external-controller'] = url.removeprefix('http://')
         cfg['secret'] = secret
         if args.action == 'plan' or not args.apply:
-            print(json.dumps({'mode': 'strict' if args.strict else 'domain', 'native_adapter': True,
-                              'rules': len(cfg['rules']), 'inline_providers': 4, 'host_routing_changed': False}, indent=2))
+            print(json.dumps({'mode': 'strict' if args.strict else 'day8-default', 'native_adapter': True,
+                              'rules': len(cfg['rules']), 'inline_providers': len(cfg['rule-providers']), 'public_udp': 'rejected', 'host_routing_changed': False}, indent=2))
             return 0
         current = controller.request(url, secret, '/configs')
         if not current.get('tun', {}).get('enable'):

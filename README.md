@@ -1,17 +1,6 @@
-# Day8 → residual 原生网关
+# Day8 默认出口与住宅分流
 
-macOS / Linux 均由 **mihomo** 路由，通过本项目的原生 Python Muon 适配程序连接 Day8，再经过 residual SOCKS5 出口。**macOS 正式部署不使用容器，也不需要 Day8 客户端。** Linux 可选容器封装；容器曾用于隔离验证，不是 macOS 的部署依赖。
-
-```text
-macOS 现有 Clash MetaX / Mihomo（原生）
-  └─ Residual-egress SOCKS5，dialer-proxy=Day8-native
-       └─ 127.0.0.1 原生 Python 适配程序 ── Muon ── Day8 ── residual ── 目标站点
-
-macOS / Linux 独立模式（原生）
-  应用 ── 本地 mihomo ── 本地 Python 适配程序 ── Day8 ── residual ── 目标站点
-```
-
-两跳指 Day8 和 residual 两个远端跳点。本地适配程序不提供远端出口。实际节点地址、协议密钥、residual 凭据及预期出口 IP 都在 `secrets/deployment.enc.json` 中，部署时由用户在终端隐藏输入密码。
+macOS 使用 Clash MetaX 自带的原生 mihomo，Linux 可独立运行 mihomo 或使用容器。两端使用同一份分流策略和原生 Muon 适配器。部署账户和节点参数保存在密码加密的 vault 中。
 
 ## 开始部署
 
@@ -30,16 +19,12 @@ python3 gateway bootstrap
 
 ## Apple / ChatGPT / OpenAI 路由范围
 
-macOS 提供两种策略：
+| 受接管的公网 TCP | 路径 |
+|---|---|
+| Apple、ChatGPT/OpenAI 的专用域名和已收录的 Apple 网段 | mihomo → Day8 → 住宅代理 → 目标 |
+| 其他域名和公网 IP，包括国内站点及共享第三方域名 | mihomo → Day8 → 目标 |
 
-| 策略 | 行为 | 覆盖边界 |
-|---|---|---|
-| `--strict`（要求“全部”时推荐） | 除本地地址和 Day8 引导连接外，所有 TCP 请求经 residual；UDP 拒绝 | 被该 mihomo 接管的连接，无需猜测未来域名；其他公网服务也使用 residual |
-| 域名模式（不加 `--strict`） | Apple、OpenAI、官方依赖域名与 Apple IP 段优先经 residual，其余沿用原规则 | 内置列表为快照；不能保证未来新增或未知域名全部命中 |
-
-独立网关默认采用严格策略。两跳节点均固定，无自动回落 VPN / DIRECT。TCP 路径不可用时连接失败。Muon 当前只支持 TCP，因此必须显式拒绝目标 UDP，不能仅依赖节点 `udp: false`；HTTP/3 通常回退 TCP，但依赖 UDP 的功能可能不可用。
-
-严格策略的前提是流量确实进入该 mihomo：macOS 通常需要现有 TUN，Linux 可配置应用代理或显式开启 TUN。只开 HTTP 系统代理不能覆盖忽略代理的应用。参见 [路由与验证](docs/routing.md)。
+当前 Muon 适配器仅实现 TCP。两类公网 UDP 均显式拒绝。现阶段可在独立回环端口验证 TCP，默认分流的整机切换等待第一跳与住宅第二跳的 UDP 数据报均通过验收。详见 [路由与验证](docs/routing.md)。
 
 ## 加密与运行
 

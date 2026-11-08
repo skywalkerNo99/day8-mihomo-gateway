@@ -9,4 +9,4 @@
 - [Mihomo inline 规则集合](https://wiki.metacubex.one/config/rule-providers/)：打包进生成的配置，避免其他 Mac 的文件路径差异。
 - [Mihomo 规则匹配实现](https://raw.githubusercontent.com/MetaCubeX/mihomo/v1.19.24/tunnel/tunnel.go)：不支持 UDP 的节点可能被跳过而继续匹配，因此显式 REJECT 目标 UDP，不能只写 `udp: false` 就声称不会泄漏。
 
-更新分类文件后运行测试，再重新执行本项目的 `macos plan` / `macos deploy --apply`。文件内嵌进内存策略，不生成含凭据的 preview 文件。分类列表不是未来全部域名的保证；需要该范围时使用 `--strict`。
+当前生效文件是 `residential-domains.yaml`。它从上述来源选取服务专用后缀、国家或地区 Apple 域名及专用 CDN 主机。上游完整分类及历史补充文件仅供核对。通用验证码、支付、证书、客服等共享主机走默认 Day8。更新生效清单后运行两种分流测试，并检查代表域名及共享域名。

@@ -18,21 +18,19 @@ CORE_CONFIG='/实际路径/核心config.yaml'
 
 ## 规划并切换
 
-要求 Apple / ChatGPT / OpenAI 的所有受接管请求都不能走默认 VPN 时，使用严格策略。它让其他公网 TCP 也经 residual，UDP 被拒绝，本地与 Day8 引导连接除外。
+先查看新策略。普通公网走 Day8，Apple/OpenAI 的已知专用域名和 Apple 网段加住宅第二跳。
 
 ```sh
-./gateway macos plan --profile "$PROFILE" --core-config "$CORE_CONFIG" --strict
+./gateway macos plan --profile "$PROFILE" --core-config "$CORE_CONFIG"
 ```
 
-用户在本机输入 vault 密码。输出只有模式、规则数量等，不输出解密配置。确认确实要切换该电脑后：
+当前版本会在切换前报告 Muon 仅支持 TCP，并阻止默认分流的 `deploy --apply`。本机验证使用下方独立检查命令，输入一次 vault 密码。它会创建临时回环核心、经 Day8 测试住宅 SOCKS5 UDP 协商、请求一次 ChatGPT HTTPS trace，再停止临时核心。结果只显示协商返回码和 IP 是否匹配。
 
 ```sh
-./gateway macos deploy --profile "$PROFILE" --core-config "$CORE_CONFIG" --strict --apply
+.venv/bin/python scripts/check_live.py
 ```
 
-再次在终端输入密码。程序启动原生后台适配器，将两跳策略通过 Mihomo loopback API **加载到内存**。原 profile 文件不修改，也没有凭据明文 preview 文件。现有 mihomo 直接执行 `Residual-egress` → `Day8-native` 的 dialer 链，不需要第二个容器或本地容器代理跳转。
-
-仅希望 Apple/OpenAI 已知域名改变时，去掉 `--strict`，采用内置规则快照。共享依赖域名也会纳入；其他流量继续原规则。有限列表不能保证未来未知域名都命中。见 [routing.md](routing.md)。
+`--strict` 是历史全住宅 TCP 模式。它会改变普通公网的出口，不符合默认 Day8 的部署要求。
 
 ## 验证
 

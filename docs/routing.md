@@ -1,18 +1,16 @@
-# 路由范围与验收
+# 路由与验收
 
-固定链：`Residual-egress` 为第二跳 SOCKS5，`dialer-proxy: Day8-native`；后者连接回环 Muon 适配器，适配器独立实现 Day8 协议。没有 `fallback`、`url-test` 或 residual 故障时转默认 VPN 的规则。
+macOS 现有 Clash 和独立 mihomo 共用策略生成器。普通公网 TCP 走 Day8，包括国内、未知域名和公网 IP。住宅 SOCKS5 的拨号固定使用 Day8，只接收 Apple/ChatGPT/OpenAI 专用域名和 Apple 专用网段。回环或局域网通过 TUN 时直连。Day8 节点的 TCP 引导连接按节点地址和端口放行。旧 profile 留作恢复。
 
-严格模式将所有受接管的公网 TCP 交给这条链，因此 Apple/OpenAI 使用未来新域名时仍走 residual。私有 IPv4/回环及 Day8 引导连接例外；UDP 显式 REJECT。独立 mihomo 默认严格模式，macOS 现有核心接入用 `--strict`。
+专用域名快照在 `rules/residential-domains.yaml`。域名后缀包含根域和子域。Stripe、Cloudflare 验证页等共享主机按普通公网规则处理。用户访问同一共享域名时，只凭域名无法区分它属于哪个应用。无法识别的裸 IP 和未来新增域名走 Day8；核对实际连接后可更新清单。业务 DNS 的 DoH 上游经 Day8。整机部署还需检查应用自带 DNS、TUN 排除项和 IPv6。
 
-域名模式内嵌 Apple、OpenAI 与官方依赖三个域名集合，以及 Apple 官方 IP 段。优先级为 Day8 引导规则 → 目标 UDP 拒绝 → 目标 TCP 的 residual 路由 → 原配置其余规则。列表来源与核对日期见 `rules/SOURCES.md`。它不能穷尽未来新增域名，也可能涵盖共享第三方服务。
+公网 UDP 在当前版本显式拒绝。住宅规则后有同范围的拒绝规则，Day8 兜底后有最终拒绝。住宅故障时住宅目标应失败，普通请求继续；Day8 故障时两类公网新连接均应失败。
 
-验收分别核对：
+## 验证命令
 
-1. 应用请求是否进入这套 mihomo。系统代理、TUN、应用自行指定代理的覆盖范围不同。
-2. 新连接匹配的规则、链是否为 residual + Day8。旧连接不会因热加载自动迁移。
-3. `gateway verify` 三次 ChatGPT trace 是否全部匹配 vault 中的预期出口。检查站点是 ChatGPT 自身，TLS 正常校验，未使用 `curl -k`。
-4. 故障时请求失败且不回退其他出口；应用在网络/核心恢复后重新连接。
+- `.venv/bin/python scripts/smoke_routes.py` 使用实际 mihomo 和两个模拟 SOCKS 跳点，检查普通、专用与共享域名，分别断开住宅和 Day8 再恢复。测试只访问回环，不需要密码。
+- `.venv/bin/python scripts/check_live.py` 交互解锁。通过 Muon 向真实住宅入口认证并请求 UDP ASSOCIATE，另经临时 mihomo 做 ChatGPT HTTPS trace。返回码 0 表示协商获准；UDP 数据面还必须用真实数据报验证。
+- 两跳 UDP 验收要求先实现独立 Day8 UDP，然后通过住宅中继取得带事务标识的公网回包，检查回包来源和远端看到的源 IP。住宅 SOCKS5 的 TCP 控制连接和协商出的 UDP 中继都必须经过 Day8。
+- 上述测试通过后，才在现有 macOS TUN 上复核实际接管和回滚。有限域名采样无法证明所有未来依赖都已覆盖。
 
-一台电脑上的有限采样不能证明所有请求永远稳定或所有客户端都无绕过。主机原有 TUN 若捕获适配器的 Day8 TCP，引导连接仍可能先经过该主机原代理；隔离验收时不能把“不修改主机路由”误写成“已证明第一跳物理直连”。正式部署在负责 TUN 的同一核心应用 bootstrap DIRECT 规则后，应核对其实际新连接。
-
-Apple/OpenAI 应用可能使用 QUIC、推送、共享 CDN、IPv6 或自定义 DNS。严格 TCP 策略防止回落，但 UDP 功能可能受限。若要支持 UDP，需要实现并验证 Muon 的 UDP 协议，不能直接删除 REJECT。
+macOS 的历史 `--strict` 模式将所有公网 TCP 送到住宅；本项目默认分流选择 `day8-default`。
