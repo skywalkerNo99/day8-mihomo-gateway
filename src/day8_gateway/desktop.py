@@ -34,6 +34,14 @@ def send_packet(context, target, packet):
 
 def main(args):
     action, *params = args
+    if action == 'domain-rules':
+        return runtime.control(ROOT, action)
+    if action == 'domain-events':
+        return runtime.control(ROOT, action, query=params[0] if params else '')
+    if action == 'change-domain-rule':
+        operation, revision, index, *fields = params
+        item = dict(zip(('kind', 'value', 'target'), fields, strict=True)) if operation == 'save' else None
+        return runtime.control(ROOT, action, action=operation, revision=revision, index=int(index), rule=item)
     if action in ('probe-status', 'route-delays'):
         return runtime.control(ROOT, action)
     if action == 'probe-interval':

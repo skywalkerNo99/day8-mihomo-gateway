@@ -17,7 +17,7 @@ def interface(address):
     return match.group(1) if match else ''
 
 
-def check(url, secret, expected):
+def check(url, secret, expected, ordinary_host='example.com'):
     def connections():
         return controller.request(url, secret, '/connections').get('connections') or []
 
@@ -53,7 +53,9 @@ def check(url, secret, expected):
         finally:
             conn.close()
 
+    targets = [(host, 'Residual-egress') for host in ('www.apple.com', 'api.openai.com', 'chatgpt.com')]
+    if ordinary_host:
+        targets.insert(0, (ordinary_host, 'Day8-native'))
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        rows = list(pool.map(probe, [('example.com', 'Day8-native'), ('www.apple.com', 'Residual-egress'),
-                                     ('api.openai.com', 'Residual-egress'), ('chatgpt.com', 'Residual-egress')]))
-    return {'ok': all(r['ok'] for r in rows), 'routes': rows}
+        rows = list(pool.map(probe, targets))
+    return {'ok': all(r['ok'] for r in rows), 'routes': rows, 'ordinaryProbe': ordinary_host}

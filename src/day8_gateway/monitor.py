@@ -1,5 +1,8 @@
 """Health of two explicit outbounds and bounded, credential-free connection logs."""
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from fnmatch import translate
+from time import time
 import re
 from urllib.parse import urlencode
 
@@ -35,3 +38,51 @@ def connection_line(line, hidden):
         if any(host.lower() in target.lower() for host in hidden):
             target = '<upstream>'
         return f'[{network}] {target} via {route}'
+
+
+class DomainJournal:
+    """Bounded in-memory stream of routing decisions. Store only allowlisted fields."""
+    def __init__(self, capacity=1500):
+        self.entries = deque(maxlen=capacity)
+        self.sequence = 0
+
+    def append(self, line, hidden):
+        entry = connection_line(line, hidden)
+        outcome = 'routed'
+        if entry:
+            if '<upstream>' in entry:
+                return
+            network, target, _, route = entry.split()
+            matched = re.search(r'\bmatch ([\w.(),:+/-]{1,300}) using ', line, re.IGNORECASE)
+            rule_name = matched[1] if matched else None
+        else:
+            # Dial errors may contain proxy endpoints and diagnostics. Retain only safe fields.
+            failure = re.search(r'\[(TCP|UDP)\] dial (Day8-native|Residual-egress|REJECT) '
+                                r'\(match ([\w.(),:+/-]{1,300})\) \S+ --> ([a-zA-Z0-9.:_\[\]-]{1,270}) ', line)
+            if not failure:
+                return
+            protocol, route, rule_name, target = failure.groups()
+            if any(h.lower() in target.lower() for h in hidden):
+                return
+            network = '[' + protocol + ']'
+            outcome = 'failed'
+        host, sep, port = target.rpartition(':')
+        if not sep or not port.isdigit():
+            return
+        host = host.strip('[]').lower()
+        self.sequence += 1
+        self.entries.append({'id': self.sequence, 'at': time(), 'host': host, 'port': int(port),
+                             'network': network[1:-1], 'route': route, 'matched': rule_name,
+                             'outcome': 'rejected' if route == 'REJECT' else outcome})
+
+    def search(self, query):
+        query = query.strip().lower()
+        if len(query) > 253:
+            raise ValueError('查询过长')
+        # Literal substring by default. Only * and ? are special in wildcard mode.
+        if '*' in query or '?' in query:
+            pattern = re.compile(translate(query.replace('[', '[[]')))
+            matches = pattern.fullmatch
+        else:
+            matches = lambda host: query in host
+        return {'ok': True, 'events': [e for e in reversed(self.entries) if matches(e['host'])]}

@@ -3,13 +3,17 @@ import SwiftUI
 
 private let support = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/Day8Gateway")
-private struct Route: Decodable, Identifiable {
+struct Route: Decodable, Identifiable {
     let id: String
     let name: String
     let available: Bool
 }
 
-private struct Reply: Decodable {
+struct Reply: Decodable {
+    var domainRules: [DomainRule]?
+    var protectedDomains: [String]?
+    var revision: String?
+    var events: [ConnectionEvent]?
     var activeID: String?
     var activeName: String?
     var routes: [Route]?
@@ -33,7 +37,7 @@ private struct Reply: Decodable {
     var error: String?
 }
 
-private func runBridge(_ arguments: [String]) async throws -> Reply {
+func runBridge(_ arguments: [String]) async throws -> Reply {
     try await Task.detached {
         let process = Process()
         process.executableURL = support.appendingPathComponent(".venv/bin/python")
@@ -396,6 +400,8 @@ private struct Panel: View {
             Picker("视图", selection: $tab) {
                 Text("线路监测").tag(0)
                 Text("Day8 线路").tag(3)
+                Text("域名路由").tag(4)
+                Text("连接日志").tag(5)
                 Text("配置与账户").tag(1)
                 Text("Linux 容器").tag(2)
             }.pickerStyle(.segmented).labelsHidden()
@@ -430,6 +436,10 @@ private struct Panel: View {
                     Button("立即测速") { Task { await model.refresh() } }.disabled(model.checking)
                 }
                 if model.snapshot?.nodes == nil { Text("管理服务未就绪，当前没有测速结果。").foregroundStyle(.secondary) }
+            } else if tab == 4 {
+                DomainRulesView()
+            } else if tab == 5 {
+                ConnectionEventsView()
             } else if tab == 3 {
                 RouteMeasurements(model: model)
             } else if tab == 1 {
@@ -477,10 +487,10 @@ private struct Panel: View {
                     }.disabled(model.busy || model.selected.isEmpty)
                 }
             }
-            if tab != 0 && !model.info.isEmpty { Text(model.info).font(.callout).textSelection(.enabled) }
-            if tab != 3 { Spacer(minLength: 0) }
+            if (tab == 1 || tab == 2) && !model.info.isEmpty { Text(model.info).font(.callout).textSelection(.enabled) }
+            if tab < 3 { Spacer(minLength: 0) }
         }
-        .padding(22).frame(minWidth: tab == 3 ? 660 : 490, minHeight: tab == 3 ? 510 : 355)
+        .padding(22).frame(minWidth: tab >= 4 ? 790 : 660, minHeight: tab >= 3 ? 510 : 355)
         .task {
             await model.readRoutes()
             if let reply = try? await runBridge(["contexts"]) {

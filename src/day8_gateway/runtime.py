@@ -8,12 +8,12 @@ from pathlib import Path
 import signal
 import socket
 
-from . import catalog, adapter, controller, monitor as metrics, node_updates, verify
+from . import catalog, adapter, controller, domain_policy, monitor as metrics, node_updates, verify
 
 
 def control(root, command, **kwargs):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        timeouts = {'verify-system-tun': 90, 'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
+        timeouts = {'change-domain-rule': 60, 'verify-system-tun': 90, 'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
         sock.settimeout(timeouts.get(command, 5))
         sock.connect(str(Path(root) / '.local/control.sock'))
         sock.sendall(json.dumps({'command': command, **kwargs}).encode() + b'\n')
@@ -46,6 +46,12 @@ async def serve(payload, cfg, args, ready_fd=None):
         dial = getattr(args, 'uplink', None)
         return adapter.Muon(node, dial=dial) if dial else adapter.Muon(node)
 
+    policy = journal = None
+    if getattr(args, 'uplink', None) and cfg:
+        policy = domain_policy.Policy(cfg, local / 'domain-rules.enc', args.update_key)
+        cfg['rules'] = policy.rules(policy.rows)
+        journal = metrics.DomainJournal()
+
     current_node = make_node(payload['day8'])
     task = asyncio.create_task(adapter.serve(payload['day8'], stop, port=args.adapter_port, ready=ready,
                                               current=lambda: current_node))
@@ -59,9 +65,13 @@ async def serve(payload, cfg, args, ready_fd=None):
     async def log_connections(stream):
         while line := await stream.readline():
             hidden = [payload['day8']['server'], payload['residual']['server']]
-            entry = metrics.connection_line(line.decode(errors='replace'), hidden)
-            if entry:
-                print(entry, flush=True)
+            text = line.decode(errors='replace')
+            if journal is not None:
+                journal.append(text, hidden)
+            if getattr(args, 'connection_logs', False):
+                entry = metrics.connection_line(text, hidden)
+                if entry:
+                    print(entry, flush=True)
 
     log_tasks = set()
 
@@ -69,7 +79,7 @@ async def serve(payload, cfg, args, ready_fd=None):
         nonlocal child
         directory = local / 'mihomo'
         directory.mkdir(mode=0o700, exist_ok=True)
-        show_logs = getattr(args, 'connection_logs', False)
+        show_logs = journal is not None or getattr(args, 'connection_logs', False)
         if show_logs:
             cfg['log-level'] = 'info'
         child = await asyncio.create_subprocess_exec(
@@ -176,7 +186,31 @@ async def serve(payload, cfg, args, ready_fd=None):
                 result = args.probes.configure(message['minutes'])
             elif command == 'verify-system-tun' and hasattr(args, 'uplink'):
                 from . import tun_verify
-                result = await asyncio.to_thread(tun_verify.check, *endpoint(), payload['expected_exit_ip'])
+                result = await asyncio.to_thread(tun_verify.check, *endpoint(), payload['expected_exit_ip'],
+                                                 policy.ordinary_probe())
+            elif command == 'domain-rules' and policy is not None:
+                result = policy.snapshot()
+            elif command == 'domain-events' and journal is not None:
+                result = journal.search(message.get('query', ''))
+            elif command == 'change-domain-rule' and policy is not None:
+                async with update_lock:
+                    try:
+                        rows = policy.change(message)
+                    except ValueError as exc:
+                        result = {'ok': False, 'error': str(exc)}
+                    else:
+                        updated = dict(cfg, rules=policy.rules(rows))
+                        try:
+                            await asyncio.to_thread(controller.apply, *endpoint(), updated)
+                            policy.persist(rows)
+                        except Exception:
+                            try:
+                                await asyncio.to_thread(controller.apply, *endpoint(), cfg)
+                            except Exception:
+                                stop.set()  # launchd reloads the last persisted policy.
+                            raise
+                        cfg['rules'] = updated['rules']
+                        result = policy.snapshot()
             elif command == 'health':
                 result = await asyncio.to_thread(metrics.snapshot, *endpoint())
             elif command == 'apply-node' and hasattr(args, 'update_key'):
