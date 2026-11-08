@@ -1,6 +1,6 @@
 # Day8 默认出口与住宅分流
 
-macOS 可由 Day8 Gateway 原生接管整机 TUN，也支持接入已有的 ClashX Meta。Linux 可独立运行 mihomo 或使用容器。两端使用同一份分流策略和原生 Muon 适配器。部署账户和节点参数保存在密码加密的 vault 中。
+macOS 可由 Day8 Gateway 原生接管整机 TUN，也支持接入已有的 ClashX Meta。Linux 可独立运行 mihomo 或使用容器。两端共用住宅域名清单和原生 Muon 适配器。部署账户和节点参数保存在密码加密的 vault 中。
 
 ## 开始部署
 
@@ -22,7 +22,8 @@ python3 gateway bootstrap
 | 受接管的公网 TCP | 路径 |
 |---|---|
 | Apple、ChatGPT/OpenAI 的专用域名和已收录的 Apple 网段 | mihomo → Day8 → 住宅代理 → 目标 |
-| 其他域名和公网 IP，包括国内站点及共享第三方域名 | mihomo → Day8 → 目标 |
+| Mac 单 App 模式下其余 .cn 域名或分流时解析到中国大陆 IP 的域名 | 物理网卡 DIRECT |
+| 其余域名和公网 IP | mihomo → Day8 → 目标 |
 
 当前 Muon 适配器仅实现 TCP。两类公网 UDP 均显式拒绝。Linux 上要求受保护的业务容器只连接 `day8_protected`，使忽略代理的 UDP 也无法直发公网。macOS 整机部署使用显式拒绝公网 UDP 的策略。详见 [路由与验证](docs/routing.md)。
 

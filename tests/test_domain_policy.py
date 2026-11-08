@@ -18,8 +18,7 @@ class RulesTests(unittest.TestCase):
             rows = change('save', -1)
             rules = policy.rules(rows)
             self.assertEqual(rules[0], 'NETWORK,UDP,REJECT')
-            self.assertEqual(rules[-4:], ['DOMAIN-SUFFIX,example.com,Residual-egress', 'DOMAIN-SUFFIX,example.com,REJECT',
-                                         'MATCH,Day8-native', 'MATCH,REJECT'])
+            self.assertEqual(rules[-6:-4], ['DOMAIN-SUFFIX,example.com,Residual-egress', 'DOMAIN-SUFFIX,example.com,REJECT'])
             self.assertIn('RULE-SET,residential-domains,Residual-egress', rules[:-4])
             policy.persist(rows)
             self.assertNotIn(b'example.com', path.read_bytes())
@@ -30,7 +29,7 @@ class RulesTests(unittest.TestCase):
                 change('save', -1)
             policy.persist(change('save', 0, 'REJECT'))
             self.assertEqual(policy.rows[0]['target'], 'REJECT')
-            self.assertEqual(policy.rules(change('delete', 0)), cfg['rules'])
+            self.assertEqual(policy.rules(change('delete', 0)), policy.rules([]))
 
     def test_rule_order_selects_a_valid_default_probe(self):
         with TemporaryDirectory() as tmp:
@@ -59,7 +58,11 @@ class RulesTests(unittest.TestCase):
                 self.assertEqual(parts['proxies'][len(cfg['proxies']):], [
                     {'name': route, 'type': 'direct', 'interface-name': interface, 'udp': False}
                 ] if interface else [])
-                self.assertEqual(policy.render([], interface), {'proxies': cfg['proxies'], 'rules': cfg['rules']})
+                defaults = policy.render([], interface)
+                self.assertEqual(defaults['proxies'], parts['proxies'])
+                self.assertEqual(defaults['rules'][-4:], ['DOMAIN-SUFFIX,cn,' + route,
+                    'AND,((DOMAIN-REGEX,.+),(RULE-SET,cn-networks)),' + route, *cfg['rules'][-2:]])
+                self.assertLess(idx, rules.index('DOMAIN-SUFFIX,cn,' + route))
 
     def test_rule_injection_and_ip_rejected(self):
         for value in ('foo,MATCH,DIRECT', 'a/b', 'https://example.com', '1.1.1.1', '*.x', '-bad', 'a..b'):
@@ -70,6 +73,13 @@ class RulesTests(unittest.TestCase):
 
 
 class JournalTests(unittest.TestCase):
+    def test_china_ip_rule_in_connection_log(self):
+        journal = monitor.DomainJournal()
+        matched = 'And(((DomainRegex,.+) && (RuleSet,cn-networks)))'
+        journal.append(f'[TCP] 127.0.0.1:19000 --> cdn.test:443 match {matched} using Physical-direct', [])
+        entry, = journal.search('cdn.test')['events']
+        self.assertEqual((entry['route'], entry['matched']), ('DIRECT', matched))
+
     def test_dial_error_does_not_store_raw_diagnostics(self):
         journal = monitor.DomainJournal()
         journal.append('[TCP] dial Day8-native (match Match/) 127.0.0.1:2000 --> failed.test:443 error: private-detail', [])

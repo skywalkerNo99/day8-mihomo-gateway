@@ -78,7 +78,7 @@ struct DomainRulesView: View {
                     Text($0).textSelection(.enabled)
                 }
             } else {
-                Text("公网 UDP 拒绝和内置住宅规则优先。自定义规则从上往下匹配，未命中时走 Day8。")
+                Text("公网 UDP 拒绝和住宅规则优先，其次按顺序匹配自定义规则。其余域名中，.cn 或解析 IP 属于中国大陆的走 DIRECT，其他走 Day8。")
                     .font(.callout).foregroundStyle(.secondary)
                 List {
                     ForEach(rows.indices, id: \.self) { i in

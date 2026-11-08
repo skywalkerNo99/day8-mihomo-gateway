@@ -48,9 +48,7 @@ async def serve(payload, cfg, args, ready_fd=None):
 
     policy = journal = None
     async def rendered(rows):
-        interface = None
-        if any(row['target'] == 'DIRECT' for row in rows):
-            interface = await asyncio.to_thread(catalog.uplink_name)
+        interface = await asyncio.to_thread(catalog.uplink_name)
         return policy.render(rows, interface)
 
     if getattr(args, 'uplink', None) and cfg:
@@ -147,8 +145,6 @@ async def serve(payload, cfg, args, ready_fd=None):
         while not stop.is_set():
             await asyncio.sleep(5)
             async with update_lock:
-                if not any(row['target'] == 'DIRECT' for row in policy.rows):
-                    continue
                 parts = await rendered(policy.rows)
                 if parts['proxies'] != cfg['proxies']:
                     await asyncio.to_thread(controller.apply, *endpoint(), {**cfg, **parts})

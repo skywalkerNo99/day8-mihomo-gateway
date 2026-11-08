@@ -97,7 +97,7 @@ class Policy:
 
     def render(self, rows, interface):
         proxies = list(self.proxies)
-        if interface and any(row['target'] == 'DIRECT' for row in rows):
+        if interface:
             proxies.append({'name': 'Physical-direct', 'type': 'direct', 'udp': False,
                             'interface-name': interface})
         return {'proxies': proxies, 'rules': self.rules(rows, interface)}
@@ -113,6 +113,9 @@ class Policy:
             result.append(prefix + target)
             if target != 'REJECT':
                 result.append(prefix + 'REJECT')
+        direct = 'Physical-direct' if interface else 'REJECT'
+        for predicate in ('DOMAIN-SUFFIX,cn', 'AND,((DOMAIN-REGEX,.+),(RULE-SET,cn-networks))'):
+            result.append(predicate + ',' + direct)
         return result + self.base[-2:]
 
     def persist(self, rows):

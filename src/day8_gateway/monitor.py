@@ -55,12 +55,12 @@ class DomainJournal:
             if '<upstream>' in entry:
                 return
             network, target, _, route = entry.split()
-            matched = re.search(r'\bmatch ([\w.(),:+/-]{1,300}) using ', line, re.IGNORECASE)
+            matched = re.search(r'\bmatch ([\w.(),:+/ &|-]{1,300}) using ', line, re.IGNORECASE)
             rule_name = matched[1] if matched else None
         else:
             # Dial errors may contain proxy endpoints and diagnostics. Retain only safe fields.
             failure = re.search(r'\[(TCP|UDP)\] dial (Day8-native|Residual-egress|REJECT|Physical-direct) '
-                                r'\(match ([\w.(),:+/-]{1,300})\) \S+ --> ([a-zA-Z0-9.:_\[\]-]{1,270}) ', line)
+                                r'\(match ([\w.(),:+/ &|-]{1,300})\) \S+ --> ([a-zA-Z0-9.:_\[\]-]{1,270}) ', line)
             if not failure:
                 return
             protocol, route, rule_name, target = failure.groups()

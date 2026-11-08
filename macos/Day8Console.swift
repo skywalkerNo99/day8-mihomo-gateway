@@ -506,5 +506,17 @@ private struct Panel: View {
     }
 }
 @main struct Day8Console: App {
-    var body: some Scene { WindowGroup("Day8 Gateway") { Panel() } }
+    @Environment(\.openWindow) private var openWindow
+    var body: some Scene {
+        Window("Day8 Gateway", id: "gateway") { Panel() }
+        MenuBarExtra("Day8 Gateway", systemImage: "network") {
+            Button("打开管理窗口") {
+                openWindow(id: "gateway")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            Button("隐藏到后台") { NSApp.hide(nil) }
+            Divider()
+            Button("退出管理界面（网关继续运行）") { NSApp.terminate(nil) }
+        }
+    }
 }
