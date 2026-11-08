@@ -22,7 +22,7 @@
 - `runtime.py`：原生监督、内存配置、0600 Unix 控制 socket。
 - `controller.py`：只允许回环 Mihomo API，支持内存 payload 热加载。
 - `cli.py`：终端隐藏输入、部署/恢复/验证命令。
-- `secrets/deployment.enc.json`：用户已加密的最小部署资料；部署必须由用户解锁。
+- `secrets/deployment.enc.json`：用户已加密的最小部署资料；首次部署由用户解锁；Linux 容器登记专用密钥卷后支持非交互重启。
 - `scripts/mihomo-lock.json`：四个平台的官方固定版本与 archive SHA-256。
 
-没有密码时仍可安装依赖、读代码、测试、规划部署；不能完成实际出站验证。应准备好命令再让用户在本机输入。
+没有密码或已登记的容器卷时，可以安装依赖、测试和规划部署；首次真实出站验证需要本地解锁。应准备好命令再让用户在本机输入。

@@ -1,0 +1,30 @@
+name: day8
+
+x-image: &gateway-image
+  image: day8-mihomo-gateway:local
+  build:
+    context: .
+    dockerfile: containers/Dockerfile
+
+services:
+  enroll:
+    <<: *gateway-image
+    profiles: [setup]
+    network_mode: none
+    command: [enroll-container]
+    volumes:
+      - ./secrets:/app/secrets:ro
+      - unlock:/var/lib/day8-unlock
+
+  day8-gateway:
+    <<: *gateway-image
+    command: [run, --bind, 0.0.0.0, --auto-unlock]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:17890:17890"
+    volumes:
+      - ./secrets:/app/secrets:ro
+      - unlock:/var/lib/day8-unlock:ro
+
+volumes:
+  unlock:

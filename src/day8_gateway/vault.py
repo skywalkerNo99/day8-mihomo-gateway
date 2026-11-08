@@ -34,28 +34,58 @@ def encrypt(payload,password):
     ciphertext=AESGCM(key(password,salt)).encrypt(nonce,canonical(payload),canonical(header))
     return {**header,'ciphertext':b64(ciphertext)}
 
-def decrypt(envelope,password):
+def _cipher_parts(envelope):
     try:
-        if set(envelope)!={'format','version','kdf','cipher','salt','nonce','ciphertext'}:
+        if set(envelope) != {'format','version','kdf','cipher','salt','nonce','ciphertext'}:
             raise VaultError('Unsupported vault fields.')
-        if envelope['format']!=FORMAT or envelope['version']!=1 or envelope['kdf']!=PARAMS or envelope['cipher']!='aes-256-gcm':
+        if envelope['format'] != FORMAT or envelope['version'] != 1 or envelope['kdf'] != PARAMS or envelope['cipher'] != 'aes-256-gcm':
             raise VaultError('Unsupported vault format or KDF parameters.')
-        salt=decode(envelope['salt']);nonce=decode(envelope['nonce']);ciphertext=decode(envelope['ciphertext'])
-        if len(salt)!=16 or len(nonce)!=12 or not 16<=len(ciphertext)<=MAX_BYTES:
+        salt = decode(envelope['salt'])
+        nonce = decode(envelope['nonce'])
+        ciphertext = decode(envelope['ciphertext'])
+        if len(salt) != 16 or len(nonce) != 12 or not 16 <= len(ciphertext) <= MAX_BYTES:
             raise VaultError('Invalid vault lengths.')
-        header={k:v for k,v in envelope.items()if k!='ciphertext'}
-        plaintext=AESGCM(key(password,salt)).decrypt(nonce,ciphertext,canonical(header))
-        return json.loads(plaintext)
-    except InvalidTag:
-        raise VaultError('Wrong password or modified encrypted profile.')from None
-    except VaultError:raise
-    except (ValueError,TypeError,KeyError,UnicodeError):
-        raise VaultError('Invalid encrypted profile.')from None
+        header = {k: v for k, v in envelope.items() if k != 'ciphertext'}
+        return salt, nonce, ciphertext, canonical(header)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise VaultError('Invalid encrypted profile.') from exc
 
-def load(path,password):
-    path=Path(path)
-    if path.stat().st_size>MAX_BYTES:raise VaultError('Encrypted profile is too large.')
-    return decrypt(json.loads(path.read_text()),password)
+
+def _open(parts, secret):
+    _, nonce, ciphertext, aad = parts
+    if len(secret) != 32:
+        raise VaultError('Invalid unlock key.')
+    try:
+        return json.loads(AESGCM(secret).decrypt(nonce, ciphertext, aad))
+    except (InvalidTag, ValueError, UnicodeError):
+        raise VaultError('Wrong key or modified encrypted profile.') from None
+
+
+def unlock_with_password(envelope, password):
+    parts = _cipher_parts(envelope)
+    secret = key(password, parts[0])
+    return _open(parts, secret), secret
+
+
+def decrypt(envelope, password):
+    payload, _ = unlock_with_password(envelope, password)
+    return payload
+
+
+def decrypt_with_key(envelope, secret):
+    return _open(_cipher_parts(envelope), secret)
+
+
+def read_envelope(path):
+    path = Path(path)
+    if path.stat().st_size > MAX_BYTES:
+        raise VaultError('Encrypted profile is too large.')
+    return json.loads(path.read_text())
+
+
+def load(path, password):
+    return decrypt(read_envelope(path), password)
+
 
 def save(path,payload,password):
     path=Path(path);path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)

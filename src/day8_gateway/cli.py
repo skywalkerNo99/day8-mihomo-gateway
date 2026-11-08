@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import yaml
 
-from . import config, controller, runtime, vault
+from . import config, container_key, controller, runtime, vault
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -60,7 +60,9 @@ def main():
     source.add_argument('--input', type=Path, help='Read an existing deployment JSON without copying it')
     commands.add_parser('rekey', help='Change vault password')
     run = commands.add_parser('run', help='Native standalone gateway; changes no system routing by default')
+    commands.add_parser('enroll-container', help='Unlock once and enroll this vault in a private Docker volume')
     native_args(run)
+    run.add_argument('--auto-unlock', action='store_true', help='Use the enrolled key in the mounted Linux container volume')
     run.add_argument('--detach', action='store_true')
     run.add_argument('--tun', action='store_true', help='Explicitly enable system TUN; requires elevated OS privileges')
     commands.add_parser('status')
@@ -96,6 +98,9 @@ def main():
         if vault.load(args.vault, first) != payload:
             raise RuntimeError('Encrypted vault verification failed.')
         print('Encrypted profile saved and verified. Password and plaintext were not saved.')
+    elif args.command == 'enroll-container':
+        container_key.enroll(args.vault, password())
+        print('容器自动解锁已启用。')
     elif args.command == 'rekey':
         payload = unlock(args)
         first = password('New vault password: ')
@@ -116,7 +121,13 @@ def main():
         ports = [args.port, args.adapter_port, args.controller_port]
         if len(set(ports)) != 3 or any(not 1 <= p <= 65535 for p in ports):
             raise ValueError('Use three different valid TCP ports.')
-        payload = unlock(args)
+        if args.auto_unlock:
+            try:
+                payload = container_key.unlock(args.vault)
+            except (OSError, ValueError):
+                raise UserError('容器自动解锁失败。请核对 vault 和密钥卷，必要时重新运行 enroll-container。') from None
+        else:
+            payload = unlock(args)
         cfg = config.native(payload, args.port, args.adapter_port, args.controller_port, args.tun, args.bind)
         runtime.start(payload, cfg, args, args.detach)
     elif args.command == 'macos':
