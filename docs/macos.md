@@ -24,7 +24,13 @@ CORE_CONFIG='/实际路径/核心config.yaml'
 ./gateway macos plan --profile "$PROFILE" --core-config "$CORE_CONFIG"
 ```
 
-当前版本会在切换前报告 Muon 仅支持 TCP，并阻止默认分流的 `deploy --apply`。本机验证使用下方独立检查命令，输入一次 vault 密码。它会创建临时回环核心、经 Day8 测试住宅 SOCKS5 UDP 协商、请求一次 ChatGPT HTTPS trace，再停止临时核心。结果只显示协商返回码和 IP 是否匹配。
+本机明确选择屏蔽不支持的公网 UDP 时，使用以下命令。它原生热加载分流配置，要求 TUN 已开启，核对规则模式，并对 ChatGPT 出口验证三次；切换或验证失败时恢复原 profile。
+
+```sh
+./gateway macos deploy --profile "$PROFILE" --core-config "$CORE_CONFIG" --block-public-udp --apply
+```
+
+本机验证使用下方独立检查命令，输入一次 vault 密码。它会创建临时回环核心、经 Day8 测试住宅 SOCKS5 UDP 协商、请求一次 ChatGPT HTTPS trace，再停止临时核心。结果只显示协商返回码和 IP 是否匹配。
 
 ```sh
 .venv/bin/python scripts/check_live.py

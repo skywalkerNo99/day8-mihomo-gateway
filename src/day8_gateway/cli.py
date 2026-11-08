@@ -75,12 +75,14 @@ def main():
     mac.add_argument('--core-config', type=Path, required=True, help='Existing core config containing controller/secret')
     mac.add_argument('--adapter-port', type=int, default=17889)
     mac.add_argument('--strict', action='store_true', help='Route all public TCP traffic through residual; strongest domain coverage')
+    mac.add_argument('--block-public-udp', action='store_true',
+                     help='Deploy the Day8-default split with unsupported public UDP rejected')
     mac.add_argument('--apply', action='store_true', help='Explicit authorization to hot-apply the in-memory configuration')
     args = parser.parse_args()
     args.root = ROOT
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(message)s')
 
-    if (args.command == 'macos' and args.action == 'deploy' and args.apply and not args.strict
+    if (args.command == 'macos' and args.action == 'deploy' and args.apply and not (args.strict or args.block_public_udp)
             or args.command == 'run' and args.tun):
         raise UserError('当前 Muon 适配器仅支持 TCP，尚不能部署要求 UDP 的整机分流。请用 run 在回环验证。')
 
@@ -145,6 +147,11 @@ def main():
             return 0
         payload = unlock(args)
         base.update(read_yaml(args.profile))
+        if args.action == 'deploy' and args.apply:
+            current = controller.request(url, secret, '/configs')
+            if not current.get('tun', {}).get('enable'):
+                raise UserError('请先启用主 Clash 的 TUN，再部署整机分流。')
+            base['tun'] = {**(base.get('tun') or {}), 'enable': True}
         cfg = config.macos(payload, base, ROOT / 'rules', args.adapter_port, args.strict)
         cfg['external-controller'] = url.removeprefix('http://')
         cfg['secret'] = secret
@@ -152,15 +159,25 @@ def main():
             print(json.dumps({'mode': 'strict' if args.strict else 'day8-default', 'native_adapter': True,
                               'rules': len(cfg['rules']), 'inline_providers': len(cfg['rule-providers']), 'public_udp': 'rejected', 'host_routing_changed': False}, indent=2))
             return 0
-        current = controller.request(url, secret, '/configs')
-        if not current.get('tun', {}).get('enable'):
-            raise ValueError('Host Mihomo TUN is not enabled. Enable it yourself for full macOS traffic coverage, then retry.')
         runtime.start(payload, None, args, detach=True)
         try:
             controller.apply(url, secret, cfg)
-        except Exception:
+            active = controller.request(url, secret, '/configs')
+            if not active.get('tun', {}).get('enable') or active.get('mode') != 'rule':
+                raise RuntimeError('Host settings differ from the requested policy.')
+            port = active.get('mixed-port') or active.get('port')
+            result = runtime.control(ROOT, 'verify', proxy=f'http://127.0.0.1:{port}')
+            if not result.get('ok'):
+                raise RuntimeError('ChatGPT exit verification failed.')
+        except BaseException:
+            try:
+                controller.request(url, secret, '/configs?force=true',
+                                   {'path': str(args.profile.expanduser().resolve())}, 'PUT')
+            except Exception:
+                raise UserError('切换验证失败，恢复原 profile 也失败。请运行 macos restore。') from None
             runtime.control(ROOT, 'stop')
-            raise RuntimeError('Host apply failed; native adapter stopped. Reload your original profile if necessary.') from None
+            raise UserError('切换或出口验证失败，已恢复原 profile。') from None
+        print('TUN rule mode active. Three ChatGPT HTTPS checks matched the expected exit.')
         print('Native two-hop policy applied in memory. Original profile file was not modified.')
         print('After a core/app restart, run deploy again and enter the vault password.')
     return 0
