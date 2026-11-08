@@ -58,3 +58,9 @@ python3 scripts/audit.py
 ## Linux 业务容器 UDP 隔离验收
 
 在 Docker Engine 28.4 的独立 Compose 项目使用合成凭据和临时网络实测。出口侧对照容器向 UDP 接收端发送探测并收到回显。只接入内部网络的业务容器可以访问网关 SOCKS 入口，分别指定 ChatGPT、OpenAI、Apple 域名的 UDP 请求均未收到回包。业务容器尝试直接向出口侧接收端、IPv4 和 IPv6 测试地址发送 UDP，内核均拒绝发送；停止网关后结果相同。接收端仅记录了对照探测。此范围要求业务容器只连接 protected 网络。
+
+## 原生 App 和登录服务验收（2026-11-08）
+
+在一台 Apple Silicon Mac 编译、签名、安装并打开管理 App。实际窗口分别显示 Day8 和经 Day8 的住宅代理 HTTPS 延迟。主动验证三次，ChatGPT trace 的域名和预期住宅 IP 均匹配。通过停止 LaunchAgent、让运行中的 Clash 重载已选启动文件并重新启动服务，观察到 TUN 启用、启动拒绝规则阻断新的 HTTPS 请求、服务使用新 PID 免密恢复分流。Apple/OpenAI 命中住宅规则，普通站点命中 Day8，核心日志记录了 Apple 和 ChatGPT 的 UDP REJECT。本轮未重启整台 Mac。
+
+在完全断网的 Linux arm64 容器中，使用真实 mihomo、合成 Muon、SOCKS5 和 HTTPS 测试服务，分别验证两跳健康、Docker 容器枚举和按目标下发、更新后出口检查及连接日志。错误密文和不可达候选节点均未覆盖上次有效更新，回退后两条链路均可用。此为离线组件互通验证；真实运营节点的出口验证来自上述 Mac。

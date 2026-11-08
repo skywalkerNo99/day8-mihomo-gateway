@@ -6,9 +6,10 @@ import logging
 import os
 from pathlib import Path
 import sys
+import time
 import yaml
 
-from . import config, container_key, controller, runtime, vault
+from . import config, container_key, controller, node_updates, runtime, vault
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -63,8 +64,13 @@ def main():
     commands.add_parser('enroll-container', help='Unlock once and enroll this vault in a private Docker volume')
     native_args(run)
     run.add_argument('--auto-unlock', action='store_true', help='Use the enrolled key in the mounted Linux container volume')
+    run.add_argument('--connection-logs', action='store_true', help='Print filtered Mihomo connection events to stdout')
     run.add_argument('--detach', action='store_true')
     run.add_argument('--tun', action='store_true', help='Explicitly enable system TUN; requires elevated OS privileges')
+    mon = commands.add_parser('monitor', help='Probe both outbounds every 30 seconds')
+    mon.add_argument('--once', action='store_true')
+    mon.add_argument('--json', action='store_true', help='Print one JSON object per sample')
+    commands.add_parser('accept-node', help='Apply an authenticated node update from stdin')
     commands.add_parser('status')
     commands.add_parser('stop')
     verify = commands.add_parser('verify')
@@ -110,8 +116,37 @@ def main():
             raise UserError('两次密码需一致且不能为空，原加密文件未变更。')
         vault.save(args.vault, payload, first)
         print('Vault password changed.')
-    elif args.command in ('status', 'stop', 'verify'):
-        result = runtime.control(ROOT, args.command, **({'proxy': args.proxy} if args.command == 'verify' else {}))
+    elif args.command in ('monitor', 'accept-node', 'status', 'stop', 'verify'):
+        root = ROOT
+        managed = Path.home() / 'Library/Application Support/Day8Gateway'
+        if sys.platform == 'darwin' and (managed / 'installation.json').exists() and not (ROOT / '.local/control.sock').exists():
+            root = managed
+            if args.command == 'stop':
+                raise UserError('登录服务由 launchd 管理。恢复原配置请使用 scripts/macos_persistent.py remove。')
+        if args.command == 'monitor':
+            while True:
+                try:
+                    result = runtime.control(root, 'health')
+                except (OSError, RuntimeError):
+                    result = {'ok': False}
+                if args.json:
+                    print(json.dumps(result, ensure_ascii=False), flush=True)
+                else:
+                    nodes = result.get('nodes', {})
+                    def latency(name):
+                        probe = nodes.get(name, {})
+                        return str(probe['ms']) + ' ms' if probe.get('online') else 'unavailable'
+                    print(time.strftime('%H:%M:%S'), ' Day8:', latency(config.TRANSPORT),
+                          ' Day8 → 1024:', latency(config.EGRESS), ' active:', result.get('connections', '—'), flush=True)
+                if args.once:
+                    return 0 if result.get('ok') and all(n['online'] for n in result['nodes'].values()) else 1
+                time.sleep(30)
+        if args.command == 'accept-node':
+            packet = sys.stdin.read(node_updates.LIMIT + 1).strip()
+            result = runtime.control(root, 'apply-node', packet=packet)
+            print('Applied and verified.' if result.get('ok') else 'Update failed; check gateway status.')
+            return 0 if result.get('ok') else 1
+        result = runtime.control(root, args.command, **({'proxy': args.proxy} if args.command == 'verify' else {}))
         print(json.dumps(result, indent=2))
         if not result.get('ok'):
             return 1
@@ -126,6 +161,8 @@ def main():
         if args.auto_unlock:
             try:
                 payload = container_key.unlock(args.vault)
+                args.update_key = container_key.read_key()
+                node_updates.load_saved(ROOT, args.vault, args.update_key, payload)
             except (OSError, ValueError):
                 raise UserError('容器自动解锁失败。请核对 vault 和密钥卷，必要时重新运行 enroll-container。') from None
         else:
@@ -134,6 +171,8 @@ def main():
         runtime.start(payload, cfg, args, args.detach)
     elif args.command == 'macos':
         base, url, secret = core_settings(args)
+        if args.action in ('restore', 'deploy') and (Path.home() / 'Library/Application Support/Day8Gateway/installation.json').is_file():
+            raise UserError('已安装登录服务。回退请运行 .venv/bin/python scripts/macos_persistent.py remove。')
         if args.action == 'restore':
             # Reloading the untouched original is explicit in the restore command.
             controller.request(url, secret, '/configs?force=true', {'path': str(args.profile.expanduser().resolve())}, 'PUT')

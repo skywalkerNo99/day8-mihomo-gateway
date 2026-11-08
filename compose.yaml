@@ -18,7 +18,7 @@ services:
 
   day8-gateway:
     <<: *gateway-image
-    command: [run, --bind, 0.0.0.0, --auto-unlock]
+    command: [run, --bind, 0.0.0.0, --auto-unlock, --connection-logs]
     restart: unless-stopped
     networks:
       protected: {}
@@ -32,6 +32,7 @@ services:
     volumes:
       - ./secrets:/app/secrets:ro
       - unlock:/var/lib/day8-unlock:ro
+      - state:/app/.local
 
 networks:
   # Business containers requiring fail-closed egress attach only here.
@@ -44,3 +45,4 @@ networks:
 
 volumes:
   unlock:
+  state:

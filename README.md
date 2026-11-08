@@ -12,7 +12,7 @@ cd day8-mihomo-gateway
 python3 gateway bootstrap
 ```
 
-- **macOS 接入现有 Clash MetaX**：按 [macOS 原生部署](docs/macos.md) 操作。现有 mihomo 直接路由两跳；不转发到容器。
+- **macOS 接入现有 Clash MetaX**：按 [macOS 原生部署](docs/macos.md) 操作。安装原生管理 App 和免密登录服务，可分别监测 Day8、1024proxy 及核验 ChatGPT 出口。
 - **Linux 或 macOS 独立网关**：按 [独立原生部署](docs/native.md) 操作。`./gateway run --detach` 解密后启动原生后台进程，默认仅监听 `127.0.0.1:17890`；不会自动切换整机网络。
 - **可选 Linux 容器**：[Linux 容器](docs/container.md)，仅用于需要容器的 Linux 环境或隔离验收。
 - **让模型接手部署**：先读 [AGENTS.md](AGENTS.md)，再按对应平台文档；不要向模型发送密码。
@@ -24,13 +24,13 @@ python3 gateway bootstrap
 | Apple、ChatGPT/OpenAI 的专用域名和已收录的 Apple 网段 | mihomo → Day8 → 住宅代理 → 目标 |
 | 其他域名和公网 IP，包括国内站点及共享第三方域名 | mihomo → Day8 → 目标 |
 
-当前 Muon 适配器仅实现 TCP。两类公网 UDP 均显式拒绝。Linux 上要求受保护的业务容器只连接 `day8_protected`，使忽略代理的 UDP 也无法直发公网。现阶段可在独立回环端口验证 TCP，默认分流的整机切换等待第一跳与住宅第二跳的 UDP 数据报均通过验收。详见 [路由与验证](docs/routing.md)。
+当前 Muon 适配器仅实现 TCP。两类公网 UDP 均显式拒绝。Linux 上要求受保护的业务容器只连接 `day8_protected`，使忽略代理的 UDP 也无法直发公网。macOS 整机部署使用显式拒绝公网 UDP 的策略。详见 [路由与验证](docs/routing.md)。
 
 ## 加密与运行
 
 加密使用 Argon2id（64 MiB、3 次、4 lanes）派生密钥及 AES-256-GCM。密码不放入命令参数、环境变量、Git、日志或钥匙串。解密配置在内存中构造，通过 stdin 送入独立 mihomo，或通过回环控制 API 热加载至现有 macOS mihomo；不会生成明文配置文件。
 
-后台进程活着时可以自动重启 mihomo 子进程。原生部署在主机或核心重启后需要重新解锁。Linux 容器支持首次输入密码登记、随后自动重启，见 [容器部署](docs/container.md)。密码忘记后无法从本仓库恢复凭据。
+后台进程活着时可以自动重启 mihomo 子进程。macOS 登录服务从登录钥匙串解锁，并在 Clash 重载时自动恢复策略。独立原生临时模式重启后需要重新解锁。Linux 容器支持首次输入密码登记、随后自动重启，见 [容器部署](docs/container.md)。密码忘记后无法从本仓库恢复凭据。
 
 ## 维护
 

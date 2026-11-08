@@ -6,7 +6,7 @@
 2. 用户密码只由用户在本机终端交互隐藏输入。不要索要聊天密码，不使用参数、环境变量、文件、录屏或剪贴板来传递密码。不要读取/截取用户输入中的密码。
 3. 真实节点、密钥、用户名、密码、预期出口 IP 仅允许放在加密 vault。不要解密导出到磁盘、打印完整配置/API 认证信息或上传诊断原文。严禁将旧实验目录、原始 Day8 数据、备份、日志、二进制或本机路径打包提交。
 4. bootstrap、单元测试与独立回环端口验收可直接进行。**实际切换系统路由、启用 TUN、替换用户现有配置，需用户明确要求该次切换。** 只做文档/仓库整理时不得顺手切换当前网络。不要停止用户当前代理或 Day8 客户端以做无关验证。
-5. macOS 接入必须读取该电脑实际 profile、核心配置、controller 与当前 TUN 状态，不复制另一台 Mac 的用户路径。先 `macos plan`；用户明确要求切换后才 `macos deploy --apply`。原文件不落盘修改，回退用 `macos restore`。核心/UI 重启后需重新解锁部署。
+5. macOS 接入必须读取该电脑实际 profile、核心配置、controller 与当前 TUN 状态，不复制另一台 Mac 的用户路径。按 docs/macos.md 安装持久模式，用登录钥匙串及 LaunchAgent 自动恢复，回退用 scripts/macos_persistent.py remove。临时 deploy 与持久模式分开。
 6. 默认策略是普通公网走 Day8，Apple/OpenAI 专用目标加住宅第二跳。请维护 rules/residential-domains.yaml；共享第三方域名留在默认路径。历史 --strict 会将所有公网 TCP 交给住宅，不能用于本方案。
 7. 不能用 fallback/url-test 把 residual 换成默认 VPN，也不能只写 `udp: false`。必须保留 UDP REJECT，断路时失败；重连需要应用重试，不承诺恢复已有 TCP 会话。
 8. 通过 `./gateway verify` 验证 ChatGPT trace 的预期 IP，不能只用普通 IP 查询站点代替。控制 socket 返回匹配布尔值，不把真实出口写进仓库。macOS 接入模式要显式指定主 Clash 的代理端口。部分核心的连接 chains 仅显示 Residual-egress；内部 dialer-proxy 需要结合固定配置、原生适配器 socket 与 bootstrap DIRECT 连接核对，不要求链数组一定包含 Day8-native。不要恢复用户已叫停的长时压测。

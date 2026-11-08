@@ -181,7 +181,7 @@ async def handle(reader, writer, muon):
         if exc.partial:
             LOG.warning("truncated encrypted stream bytes=%d", len(exc.partial))
     except Exception as exc:
-        LOG.warning("tunnel failed error=%s detail=%s", type(exc).__name__, str(exc))
+        LOG.warning("tunnel failed error=%s", type(exc).__name__)
         if not replied:
             writer.write(b"\x05\x01\x00\x01" + b"\x00" * 6)
             with contextlib.suppress(Exception):
@@ -199,7 +199,7 @@ async def handle(reader, writer, muon):
             await writer.wait_closed()
 
 
-async def serve(config, stopping, host="127.0.0.1", port=17889, ready=None):
+async def serve(config, stopping, host="127.0.0.1", port=17889, ready=None, current=None):
     """Serve native SOCKS5; the owner retains decrypted config only in memory."""
     muon = Muon(config)
     tasks = set()
@@ -207,7 +207,7 @@ async def serve(config, stopping, host="127.0.0.1", port=17889, ready=None):
 
     def connected(reader, writer):
         clients.add(writer)
-        task = asyncio.create_task(handle(reader, writer, muon))
+        task = asyncio.create_task(handle(reader, writer, current() if current else muon))
         tasks.add(task)
         def finished(done):
             tasks.discard(done)

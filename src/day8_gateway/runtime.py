@@ -8,12 +8,12 @@ from pathlib import Path
 import signal
 import socket
 
-from . import adapter, controller, verify
+from . import adapter, controller, monitor as metrics, node_updates, verify
 
 
 def control(root, command, **kwargs):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        sock.settimeout(160 if command == 'verify' else 5)
+        sock.settimeout(160 if command in ('verify', 'apply-node', 'health') else 5)
         sock.connect(str(Path(root) / '.local/control.sock'))
         sock.sendall(json.dumps({'command': command, **kwargs}).encode() + b'\n')
         chunks = b''
@@ -41,21 +41,40 @@ async def serve(payload, cfg, args, ready_fd=None):
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
     ready = asyncio.Event()
-    task = asyncio.create_task(adapter.serve(payload['day8'], stop, port=args.adapter_port, ready=ready))
+    current_node = adapter.Muon(payload['day8'])
+    task = asyncio.create_task(adapter.serve(payload['day8'], stop, port=args.adapter_port, ready=ready,
+                                              current=lambda: current_node))
+    update_lock = asyncio.Lock()
     child = None
     listener = None
     monitor = None
     socket_path = local / 'control.sock'
     restarts = 0
 
+    async def log_connections(stream):
+        while line := await stream.readline():
+            hidden = [payload['day8']['server'], payload['residual']['server']]
+            entry = metrics.connection_line(line.decode(errors='replace'), hidden)
+            if entry:
+                print(entry, flush=True)
+
+    log_tasks = set()
+
     async def spawn():
         nonlocal child
         directory = local / 'mihomo'
         directory.mkdir(mode=0o700, exist_ok=True)
+        show_logs = getattr(args, 'connection_logs', False)
+        if show_logs:
+            cfg['log-level'] = 'info'
         child = await asyncio.create_subprocess_exec(
             str(args.mihomo), '-d', str(directory), '-f', '/dev/stdin',
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE if show_logs else asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL)
+        if show_logs:
+            log_task = asyncio.create_task(log_connections(child.stdout))
+            log_tasks.add(log_task)
+            log_task.add_done_callback(log_tasks.discard)
         child.stdin.write(json.dumps(cfg, ensure_ascii=False).encode())
         await child.stdin.drain()
         child.stdin.close()
@@ -96,6 +115,44 @@ async def serve(payload, cfg, args, ready_fd=None):
                 stop.set()
                 raise RuntimeError('Mihomo restart failed; unlock and start again.') from None
 
+    def endpoint():
+        if cfg:
+            return f'http://127.0.0.1:{args.controller_port}', cfg['secret']
+        from .cli import core_settings
+        _, url, secret = core_settings(args)
+        return url, secret
+
+    async def apply_node(packet):
+        nonlocal current_node
+        from . import macos_service
+        key = args.update_key
+        candidate = node_updates.unseal(args.vault, key, payload, packet)
+        async with update_lock:
+            url, secret = endpoint()
+            live = await asyncio.to_thread(controller.request, url, secret, '/configs')
+            rules = await asyncio.to_thread(controller.request, url, secret, '/rules')
+            if [r.get('proxy') for r in rules['rules'][-2:]] != ['Day8-native', 'REJECT']:
+                raise RuntimeError('Gateway policy is not active.')
+            old = payload['day8']
+            previous = current_node
+            proxy = f"http://127.0.0.1:{live['mixed-port']}"
+            try:
+                current_node = adapter.Muon(candidate)
+                payload['day8'] = candidate
+                if cfg is None:
+                    await asyncio.to_thread(macos_service.apply_policy, payload, args, url, secret)
+                test = await asyncio.to_thread(verify.check, proxy, payload['expected_exit_ip'], 1)
+                if not test['ok']:
+                    raise ValueError('Exit verification failed.')
+                node_updates.save(local / 'node.enc', packet)
+            except BaseException:
+                current_node = previous
+                payload['day8'] = old
+                if cfg is None:
+                    await asyncio.to_thread(macos_service.apply_policy, payload, args, url, secret)
+                raise
+        return {'ok': True}
+
     async def connection(reader, writer):
         try:
             message = json.loads(await asyncio.wait_for(reader.readline(), 5))
@@ -104,11 +161,22 @@ async def serve(payload, cfg, args, ready_fd=None):
                 result = {'ok': True, 'pid': os.getpid(), 'mode': 'adapter' if cfg is None else 'standalone',
                           'adapter_port': args.adapter_port, 'mihomo_pid': child.pid if child else None,
                           'mihomo_restarts': restarts, 'proxy_port': args.port if cfg else None}
+            elif command == 'health':
+                result = await asyncio.to_thread(metrics.snapshot, *endpoint())
+            elif command == 'apply-node' and hasattr(args, 'update_key'):
+                result = await apply_node(message['packet'])
             elif command == 'stop':
                 stop.set()
                 result = {'ok': True}
             elif command == 'verify':
-                proxy = message.get('proxy') or f'http://127.0.0.1:{args.port}'
+                proxy = message.get('proxy')
+                if not proxy:
+                    if cfg is not None:
+                        port = args.port
+                    else:
+                        live = await asyncio.to_thread(controller.request, *endpoint(), '/configs')
+                        port = live['mixed-port']
+                    proxy = f'http://127.0.0.1:{port}'
                 # The local socket is 0600 and never exposes the unlocked profile.
                 if not proxy.startswith(('http://127.0.0.1:', 'socks5h://127.0.0.1:')):
                     raise ValueError('Verification proxy must be loopback.')
@@ -140,7 +208,7 @@ async def serve(payload, cfg, args, ready_fd=None):
             monitor = asyncio.create_task(watch())
         if socket_path.exists():
             socket_path.unlink()
-        listener = await asyncio.start_unix_server(connection, path=str(socket_path), limit=4096)
+        listener = await asyncio.start_unix_server(connection, path=str(socket_path), limit=node_updates.LIMIT + 512)
         os.chmod(socket_path, 0o600)
         if ready_fd is not None:
             os.write(ready_fd, b'OK\n')

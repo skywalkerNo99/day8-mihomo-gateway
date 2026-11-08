@@ -32,10 +32,14 @@ def enroll(profile, password, path=KEY_FILE):
         os.close(directory)
 
 
-def unlock(profile, path=KEY_FILE):
+def read_key(path=KEY_FILE):
     with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as f:
         info = os.fstat(f.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.geteuid():
             raise vault.VaultError('Unsafe unlock key permissions.')
         secret = f.read(33)
-    return config.validate(vault.decrypt_with_key(vault.read_envelope(profile), secret))
+    return secret
+
+
+def unlock(profile, path=KEY_FILE):
+    return config.validate(vault.decrypt_with_key(vault.read_envelope(profile), read_key(path)))

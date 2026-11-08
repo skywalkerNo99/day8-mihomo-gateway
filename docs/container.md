@@ -46,3 +46,15 @@ docker compose exec -T day8-gateway python3 gateway verify
 原始密码只在首次登记时用于密钥派生。Docker 卷保存的是等价于解锁当前 vault 的秘密，目录权限 0700，密钥文件权限 0600。能读取卷及密文的管理员或备份系统可以解密这份配置。运行服务只读挂载密钥卷，备份加密配置时将该卷视同凭据。撤销本机自动启动和解锁，可对本项目执行 `docker compose down -v`；这会移除服务和本项目的密钥卷。已经复制的密钥仍能解开匹配的旧密文。
 
 如需每次手动解锁，镜像原有的交互式 `docker run --rm -it` 方式仍可使用。在 Mac 上正式部署请参照 [macOS 原生接入](macos.md)。
+
+## 双节点监测与连接输出
+
+```sh
+docker compose exec -T day8-gateway python3 gateway monitor
+docker compose exec -T day8-gateway python3 gateway monitor --once --json
+docker compose logs -f --tail 30 day8-gateway
+```
+
+monitor 每 30 秒分别对 Day8 第一跳和 Day8 → 1024 住宅出站发起 HTTPS 探测。单次模式在任一路径探测失败时返回非零退出码。连接输出来自实际 mihomo 核心，例如 `[TCP] chatgpt.com:443 via Residual-egress`。业务域名可能出现在日志中，节点地址会被遮蔽。通过实际目标服务验证住宅出口使用 `python3 gateway verify`。
+
+Mac 管理 App 使用现有 Docker Context 选择目标。运行在远程 Linux 时，先在 Mac 上配置指向受管主机的 SSH Context，例如 `docker context create my-gateway --docker host=ssh://user@host`。更新前在目标项目中运行 `docker compose up -d --build day8-gateway`。新 Compose 中的 state 卷保留已认证的节点更新，重建后也会加载。密钥卷、密文和更新包须对应同一份基础 vault。目标更新失败时保留原配置；运营环境使用实际 SSH 主机和具体容器名。

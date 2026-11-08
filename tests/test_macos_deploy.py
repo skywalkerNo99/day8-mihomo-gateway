@@ -19,7 +19,7 @@ class MacDeployTests(unittest.TestCase):
             live = {'tun': {'enable': True}, 'mode': 'rule', 'mixed-port': 12345}
             argv = ['gateway', 'macos', 'deploy', '--profile', str(profile), '--core-config', str(core),
                     '--block-public-udp', '--apply']
-            with (patch('sys.argv', argv), patch.object(cli, 'unlock', return_value=fixture()),
+            with (patch.object(Path, 'home', return_value=Path(tmp)), patch('sys.argv', argv), patch.object(cli, 'unlock', return_value=fixture()),
                   patch.object(cli.controller, 'request', return_value=live) as api,
                   patch.object(cli.controller, 'apply') as apply,
                   patch.object(cli.runtime, 'start'),
