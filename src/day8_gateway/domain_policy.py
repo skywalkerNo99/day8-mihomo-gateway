@@ -114,8 +114,7 @@ class Policy:
             if target != 'REJECT':
                 result.append(prefix + 'REJECT')
         direct = 'Physical-direct' if interface else 'REJECT'
-        for predicate in ('DOMAIN-SUFFIX,cn', 'AND,((DOMAIN-REGEX,.+),(RULE-SET,cn-networks))'):
-            result.append(predicate + ',' + direct)
+        result.extend(config.mainland_rules(direct))
         return result + self.base[-2:]
 
     def persist(self, rows):

@@ -1,6 +1,7 @@
 """Health of two explicit outbounds and bounded, credential-free connection logs."""
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from fnmatch import translate
 from time import time
 import re
@@ -9,6 +10,7 @@ from urllib.parse import urlencode
 from . import config, controller
 
 PROBE = 'https://www.gstatic.com/generate_204'
+LOG_TIMEZONE = timezone(timedelta(hours=8))
 
 
 def snapshot(url, secret):
@@ -40,6 +42,12 @@ def connection_line(line, hidden):
         if route == 'Physical-direct':
             route = 'DIRECT'
         return f'[{network}] {target} via {route}'
+
+
+def timestamped_connection_line(line, hidden):
+    entry = connection_line(line, hidden)
+    if entry and '<upstream>' not in entry:
+        return f'{datetime.now(LOG_TIMEZONE).isoformat(timespec="milliseconds")} {entry}'
 
 
 class DomainJournal:

@@ -166,9 +166,11 @@ func runBridge(_ arguments: [String], input: Data? = nil) async throws -> Reply 
         defer { checking = false }
         snapshot = try? await runBridge(["health"])
         checked = Date()
+        guard let nodes = snapshot?.nodes else { return }
         for name in ["Day8-native", "Residual-egress"] {
             var samples = history[name] ?? []
-            samples.append(snapshot?.nodes?[name]?.ms)
+            guard let probe = nodes[name] else { continue }
+            samples.append(probe.ms)
             history[name] = Array(samples.suffix(20))
         }
     }
@@ -189,10 +191,12 @@ func runBridge(_ arguments: [String], input: Data? = nil) async throws -> Reply 
                 identities = result.identities ?? [:]
                 containers = result.targets ?? []
                 selected = containers.first ?? ""
-                info = result.ok ? (containers.isEmpty ? "该 Context 没有运行中的 day8-gateway 服务。" : "") : "无法连接该 Docker Context。"
+                info = result.ok ? (containers.isEmpty ? "该 Context 没有运行中的 Day8 网关容器。" : "") : "无法连接该 Docker Context。"
             case "sync-official" where result.error == "NoExportedNode":
                 info = "这版 Day8 的本地配置没有可导入的 Muon 节点。当前网关继续使用原节点。"
-            case "sync-official", "import", "push":
+            case "push":
+                info = result.ok ? "容器线路已更新，ChatGPT 出口核验通过。" : "容器更新失败，请检查 SSH 连接、容器版本和 vault 是否匹配。"
+            case "sync-official", "import":
                 info = result.ok ? "配置已生效，ChatGPT 出口核验通过。" : "更新失败。请检查节点文件、容器版本和 vault 是否匹配。"
                 await refresh()
             default: break
@@ -435,7 +439,7 @@ private struct Panel: View {
                         }.padding(6)
                     }
                 }
-                HStack { Text("ChatGPT 住宅出口"); Spacer(); Text(model.exitStatus); Button("核验出口") { Task { await model.action(["verify"]) } }.disabled(model.busy) }
+                HStack { Text("ChatGPT 住宅出口 · 最近核验"); Spacer(); Text(model.exitStatus); Button("核验出口") { Task { await model.action(["verify"]) } }.disabled(model.busy) }
                 Divider()
                 HStack {
                     if let count = model.snapshot?.connections { Text("活跃连接  \(count)").monospacedDigit() }
@@ -443,7 +447,7 @@ private struct Panel: View {
                     if let date = model.checked { Text(date, style: .time).foregroundStyle(.secondary) }
                     Button("立即测速") { Task { await model.refresh() } }.disabled(model.checking)
                 }
-                if model.snapshot?.nodes == nil { Text("管理服务未就绪，当前没有测速结果。").foregroundStyle(.secondary) }
+                if model.checked != nil && model.snapshot?.nodes == nil { Text("本次未能读取测速结果，可点「立即测速」重试。").foregroundStyle(.secondary) }
             } else if tab == 4 {
                 DomainRulesView()
             } else if tab == 5 {
@@ -479,7 +483,7 @@ private struct Panel: View {
                     if panel.runModal() == .OK, let url = panel.url { Task { await model.action(["import", url.path]) } }
                 }.disabled(model.busy)
             } else {
-                Text("更新指定 Linux 网关").font(.headline)
+                Text("更新 Linux 容器线路").font(.headline)
                 TextField("Docker Context", text: Binding(get: { context }, set: { value in
                     context = value
                     model.containers = []
@@ -496,7 +500,7 @@ private struct Panel: View {
                 Button("查找容器") { Task { await model.action(["targets", context]) } }.disabled(model.busy)
                 if !model.containers.isEmpty {
                     Picker("目标容器", selection: $model.selected) { ForEach(model.containers, id: \.self) { Text($0) } }
-                    Button("将当前 Day8 配置应用到此容器") {
+                    Button("将本机当前 Day8 线路应用到此容器") {
                         if context == model.listedContext, let id = model.identities[model.selected] {
                             Task { await model.action(["push", context, id]) }
                         }
@@ -508,11 +512,12 @@ private struct Panel: View {
         }
         .padding(22).frame(minWidth: tab >= 4 ? 790 : 660, minHeight: tab >= 3 ? 510 : 355)
         .task {
-            await model.readRoutes()
             if let reply = try? await runBridge(["contexts"]) {
                 contexts = reply.contexts ?? []
                 if context.isEmpty { context = reply.current ?? "default" }
             }
+        }
+        .task {
             while !Task.isCancelled {
                 if tab == 0 { await model.refresh() }
                 if tab == 0 || tab == 3 { await model.readRoutes() }

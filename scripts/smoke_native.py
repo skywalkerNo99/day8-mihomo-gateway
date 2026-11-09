@@ -34,14 +34,10 @@ def main():
         try:
             first = runtime.control(args.root, 'status')
             url = f'http://127.0.0.1:{args.controller_port}'
-            merged = config.macos(fixture(), cfg, ROOT / 'rules', args.adapter_port)
-            controller.apply(url, cfg['secret'], merged)
+            controller.apply(url, cfg['secret'], cfg)
             effective = controller.request(url, cfg['secret'], '/rules')['rules']
             assert any(r.get('proxy') == config.EGRESS for r in effective)
             print('Native core accepted inline domain/IP rules and explicit UDP rejection.')
-            strict = config.macos(fixture(), cfg, ROOT / 'rules', args.adapter_port, strict=True)
-            controller.apply(url, cfg['secret'], strict)
-            print('Native core accepted strict policy via in-memory payload API.')
             os.kill(first['mihomo_pid'], signal.SIGTERM)
             for _ in range(150):
                 time.sleep(.1)

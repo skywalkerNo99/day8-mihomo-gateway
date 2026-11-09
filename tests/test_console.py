@@ -1,3 +1,6 @@
+from datetime import datetime, timedelta
+import os
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -37,12 +40,14 @@ class ConsoleTests(unittest.TestCase):
         self.assertIsNone(official.selected({'outbounds': [outbound, outbound]}))
         self.assertIsNone(official.selected({'router': {}}))
 
-    def test_launch_profile_only_allows_reject(self):
-        profile = macos_service.startup_config({'proxies':[fixture()['residual']], 'mixed-port': 7890}, 'http://127.0.0.1:9090', '')
-        self.assertNotIn('proxies', profile)
-        self.assertEqual(profile['proxy-groups'][0]['proxies'], ['REJECT'])
-        self.assertEqual(profile['rules'], ['MATCH,' + macos_service.LOCK])
-        self.assertTrue(profile['tun']['enable'])
+    def test_login_service_accepts_no_legacy_clash_arguments(self):
+        import io
+        from contextlib import redirect_stderr
+        with (patch('sys.argv', ['service', '--root', '/synthetic', '--profile', '/synthetic/clash.yaml']),
+              patch.object(macos_service.macos_keychain, 'unlock') as unlock,
+              redirect_stderr(io.StringIO()), self.assertRaises(SystemExit)):
+            macos_service.main()
+        unlock.assert_not_called()
 
     def test_probe_failures_independent(self):
         def reply(url, secret, path):
@@ -58,6 +63,28 @@ class ConsoleTests(unittest.TestCase):
         line = '[TCP] local:12 --> 192.0.2.1:99 match Match using Day8-native private'
         self.assertEqual(monitor.connection_line(line, ['192.0.2.1']), '[TCP] <upstream> via Day8-native')
         self.assertIsNone(monitor.connection_line('parse error password=secret', []))
+
+    def test_connection_stdout_has_timestamp_timezone_and_redaction(self):
+        line = '[TCP] local:12 --> example.com:443 match Match using Day8-native private'
+        record = monitor.timestamped_connection_line(line, ['192.0.2.1'])
+        stamp, message = record.split(' ', 1)
+        self.assertIsNotNone(datetime.fromisoformat(stamp).utcoffset())
+        self.assertEqual(message, '[TCP] example.com:443 via Day8-native')
+        self.assertNotIn('private', record)
+        hidden = '[TCP] local:12 --> 192.0.2.1:443 match Match using DIRECT'
+        self.assertIsNone(monitor.timestamped_connection_line(hidden, ['192.0.2.1']))
+        self.assertIsNone(monitor.timestamped_connection_line('parse error password=secret', []))
+
+    def test_connection_timestamps_use_utc8_in_a_utc_container(self):
+        try:
+            with patch.dict(os.environ, {'TZ': 'UTC'}):
+                time.tzset()
+                record = monitor.timestamped_connection_line(
+                    '[TCP] local:12 --> example.com:443 match Match using Day8-native', [])
+        finally:
+            time.tzset()
+        stamp = record.split(' ', 1)[0]
+        self.assertEqual(datetime.fromisoformat(stamp).utcoffset(), timedelta(hours=8))
 
     def test_remote_update_requires_managed_linux_container(self):
         with patch.object(desktop, 'docker', return_value='abc something-else linux') as docker:

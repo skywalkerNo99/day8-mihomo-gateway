@@ -1,5 +1,6 @@
-"""Install or remove the login-time Day8 policy for ClashX Meta."""
+"""Install, upgrade or remove the macOS single-app login service."""
 import argparse
+import gzip
 import json
 import os
 from pathlib import Path
@@ -12,8 +13,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
-from day8_gateway import controller, macos_keychain, macos_service as svc, runtime
-from day8_gateway.cli import core_settings, password, read_yaml
+from day8_gateway import macos_keychain, macos_service as svc, runtime
+from day8_gateway.cli import password
 
 HOME = Path.home()
 SUPPORT = HOME / 'Library/Application Support/Day8Gateway'
@@ -31,6 +32,7 @@ def atomic(path, data):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)
             os.replace(tmp, path)
         finally:
             tmp.unlink(missing_ok=True)
@@ -40,8 +42,26 @@ def ctl(*args, check=True):
     return subprocess.run(['/bin/launchctl', *args], capture_output=True, check=check)
 
 
-def select(name):
-    subprocess.run(['/usr/bin/defaults', 'write', svc.APP_ID, 'selectConfigName', '-string', name], check=True)
+def stop_agent():
+    # bootout is asynchronous: a successful return does not release the label.
+    # Reusing it immediately makes bootstrap fail with launchd error 5.
+    ctl('bootout', TARGET, check=False)
+    until = time.monotonic() + 25
+    while time.monotonic() < until:
+        if ctl('print', TARGET, check=False).returncode != 0:
+            return
+        time.sleep(.1)
+    raise RuntimeError('Previous login agent did not unregister.')
+
+
+def agent_job(adapter_port):
+    return {'Label': svc.LABEL,
+            'ProgramArguments': [str(SUPPORT / '.venv/bin/python'), '-m', 'day8_gateway.macos_service',
+                                 '--root', str(SUPPORT), '--adapter-port', str(adapter_port)],
+            'EnvironmentVariables': {'PYTHONPATH': str(SUPPORT / 'src')},
+            'WorkingDirectory': str(SUPPORT), 'RunAtLoad': True, 'KeepAlive': True,
+            'ThrottleInterval': 5, 'Umask': 0o077,
+            'StandardErrorPath': str(SUPPORT / 'service.log')}
 
 
 def install_catalog():
@@ -50,98 +70,90 @@ def install_catalog():
         atomic(SUPPORT / 'routes.enc.json', source.read_bytes())
 
 
+def start_agent(adapter_port):
+    atomic(JOB, plistlib.dumps(agent_job(adapter_port)))
+    ctl('enable', TARGET)
+    ctl('bootstrap', DOMAIN, str(JOB))
+    for _ in range(100):
+        try:
+            state = runtime.control(SUPPORT, 'status')
+            if state.get('mode') == 'standalone' and state['adapter_port'] == adapter_port:
+                return
+        except (OSError, RuntimeError):
+            pass
+        time.sleep(.25)
+    raise RuntimeError('Login agent startup failed.')
+
+
 def install(args):
-    if STATE.exists() or JOB.exists() or args.locked.exists():
-        raise SystemExit('An installation or profile already exists. Inspect it before reinstalling.')
-    prefs = subprocess.check_output(['/usr/bin/defaults', 'export', svc.APP_ID, '-'])
-    current = plistlib.loads(prefs).get('selectConfigName')
-    if current != args.profile.stem:
-        raise SystemExit('The source profile must match the currently selected ClashX profile.')
+    if STATE.exists() or JOB.exists():
+        raise SystemExit('Existing installation: use gateway macos migrate or upgrade.')
+    import macos_takeover as takeover
+    takeover.compile_session()
+    takeover.check_ports(include_adapter=args.adapter_port)
+    previous = takeover.previous_session()
     profile = ROOT / 'secrets/deployment.enc.json'
     try:
         macos_keychain.unlock(profile)
     except RuntimeError:
         macos_keychain.enroll(profile, password('首次钥匙串登记密码（隐藏输入）: '))
-    core, url, secret = core_settings(args)
-    active = controller.request(url, secret, '/configs')
-    if not active.get('tun', {}).get('enable') or active.get('mode') != 'rule':
-        raise SystemExit('Enable ClashX TUN and rule mode before installing.')
-    core.update(read_yaml(args.profile))
-    core['mixed-port'] = active['mixed-port']
-    locked = svc.startup_config(core, url, secret)
+    package = takeover.archive()
     SUPPORT.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(SUPPORT, 0o700)
     for name in ('src', 'rules', '.venv'):
         shutil.copytree(ROOT / name, SUPPORT / name, symlinks=True, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__'))
     atomic(SUPPORT / 'deployment.enc.json', profile.read_bytes())
+    atomic(SUPPORT / 'mihomo', gzip.decompress(package.read_bytes()))
+    (SUPPORT / 'mihomo').chmod(0o700)
     install_catalog()
-    atomic(args.locked, json.dumps(locked, ensure_ascii=False).encode())
-    settings = {'source': str(args.profile), 'locked': str(args.locked), 'core': str(args.core_config)}
-    atomic(STATE, json.dumps(settings).encode())
-    python = str(SUPPORT / '.venv/bin/python')
-    job = {'Label': svc.LABEL, 'ProgramArguments': [python, '-m', 'day8_gateway.macos_service',
-           '--root', str(SUPPORT), '--profile', str(args.locked), '--core-config', str(args.core_config),
-           '--adapter-port', str(args.adapter_port)], 'EnvironmentVariables': {'PYTHONPATH': str(SUPPORT / 'src')},
-           'WorkingDirectory': str(SUPPORT), 'RunAtLoad': True, 'KeepAlive': True,
-           'ThrottleInterval': 5, 'Umask': 0o077,
-           'StandardErrorPath': str(SUPPORT / 'service.log')}
-    atomic(JOB, plistlib.dumps(job))
-    ctl('bootstrap', DOMAIN, str(JOB))
-    for _ in range(80):
-        try:
-            if runtime.control(SUPPORT, 'status')['adapter_port'] == args.adapter_port:
-                break
-        except (OSError, RuntimeError):
-            pass
-        time.sleep(.25)
-    else:
-        raise SystemExit('Agent did not start. Existing live policy was not switched. Use remove before retrying.')
-    # The on-disk selection is committed only after launchd can unlock and bind.
-    select(args.locked.stem)
-    controller.request(url, secret, '/configs?force=true', {'path': str(args.locked)}, 'PUT')
-    for _ in range(80):
-        rules = controller.request(url, secret, '/rules')['rules']
-        if len(rules) > 2 and rules[-2]['proxy'] == 'Day8-native':
-            break
-        time.sleep(.25)
-    else:
-        raise SystemExit('Startup policy remains locked. Check the login agent.')
-    verified = runtime.control(SUPPORT, 'verify', proxy=f'http://127.0.0.1:{active["mixed-port"]}')
-    if not verified['ok']:
-        raise SystemExit('Residential exit did not verify. Inspect the installed policy or use remove.')
-    print('Installed. Startup policy loaded and three ChatGPT exit checks passed.')
+    atomic(STATE, json.dumps({'schema': 2, 'mode': 'single-app'}).encode())
+    try:
+        start_agent(args.adapter_port)
+        takeover.preflight()
+        takeover.authorize()
+        takeover.migrate(previous=previous)
+    except BaseException:
+        # A prepared migration owns its own recovery. Before that point only the
+        # loopback service was installed, so stopping it leaves the old route intact.
+        if not takeover.STATE.exists():
+            stop_agent()
+            ctl('disable', TARGET, check=False)
+        raise
+    print('Installed single-app TUN; system routing and ChatGPT exit verified.')
 
 
 def remove(args):
-    if (SUPPORT / 'single-app.enabled').exists():
-        raise SystemExit('Restore the single-app TUN first using scripts/macos_takeover.py rollback.')
+    import macos_takeover as takeover
+    if takeover.STATE.exists():
+        takeover.compile_session()
+        takeover.authorize()
+        takeover.restore()
     settings = json.loads(STATE.read_text())
-    args.core_config = Path(settings['core'])
-    _, url, secret = core_settings(args)
-    original = Path(settings['source'])
-    if not original.is_file():
-        raise SystemExit('Original profile is missing.')
-    select(original.stem)
-    controller.request(url, secret, '/configs?force=true', {'path': str(original)}, 'PUT')
-    ctl('bootout', TARGET, check=False)
+    if settings.get('schema') != 2:
+        raise SystemExit('Migrate the legacy installation before removing it.')
+    stop_agent()
     JOB.unlink(missing_ok=True)
-    Path(settings['locked']).unlink(missing_ok=True)
     STATE.unlink()
-    # Copied vault and code are private; remove only installer-owned files.
+    (SUPPORT / 'single-app.enabled').unlink(missing_ok=True)
     for name in ('src', 'rules', '.venv'):
         shutil.rmtree(SUPPORT / name, ignore_errors=True)
-    (SUPPORT / 'deployment.enc.json').unlink(missing_ok=True)
-    (SUPPORT / 'routes.enc.json').unlink(missing_ok=True)
-    (SUPPORT / 'routes.local.enc.json').unlink(missing_ok=True)
+    for name in ('deployment.enc.json', 'routes.enc.json', 'routes.local.enc.json', 'mihomo'):
+        (SUPPORT / name).unlink(missing_ok=True)
     for name in ('node.enc', 'residual.enc', 'domain-rules.enc', 'probe-settings.json', 'probe-results.json'):
         (SUPPORT / '.local' / name).unlink(missing_ok=True)
-    print('Original profile restored. LaunchAgent removed.')
+    print('Single-app services removed. Previous network restored when recorded.')
 
 
-def upgrade():
+def upgrade(migrating=False):
     if not STATE.is_file() or not JOB.is_file():
-        raise SystemExit('Install the login service first.')
+        raise SystemExit('Install the single-app login service first.')
+    settings = json.loads(STATE.read_text())
+    if not migrating and settings.get('mode') != 'single-app':
+        raise SystemExit('Legacy installation: run gateway macos migrate first.')
+    old_job = JOB.read_bytes()
+    previous = runtime.control(SUPPORT, 'status')
+    port = previous['adapter_port']
     with tempfile.TemporaryDirectory(dir=SUPPORT) as temp:
         stage = Path(temp)
         targets = ('src', 'rules')
@@ -149,52 +161,47 @@ def upgrade():
             shutil.copytree(ROOT / name, stage / name, ignore=shutil.ignore_patterns('__pycache__'))
         replaced = []
         try:
-            previous = runtime.control(SUPPORT, 'status')['pid']
+            # Rewrite launchd arguments as well as code: old jobs contain Clash paths.
+            stop_agent()
             for name in targets:
                 os.rename(SUPPORT / name, stage / ('old-' + name))
                 replaced.append(name)
                 os.rename(stage / name, SUPPORT / name)
-            ctl('kickstart', '-k', TARGET)
-            for _ in range(100):
-                try:
-                    state = runtime.control(SUPPORT, 'status')
-                    if state.get('ok') and state.get('pid') != previous:
-                        break
-                except (RuntimeError, OSError):
-                    pass
-                time.sleep(.25)
-            else:
-                raise RuntimeError('Updated agent did not start.')
+            start_agent(port)
         except BaseException:
+            stop_agent()
             for name in reversed(replaced):
                 shutil.rmtree(SUPPORT / name, ignore_errors=True)
                 os.rename(stage / ('old-' + name), SUPPORT / name)
-            if replaced:
-                ctl('kickstart', '-k', TARGET)
+            atomic(JOB, old_job)
+            ctl('enable', TARGET)
+            ctl('bootstrap', DOMAIN, str(JOB))
             raise
-    install_catalog()
-    print('Updated the installed login service.')
+    if not migrating:
+        install_catalog()
+    print('Updated the single-app login service and launchd arguments.')
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('action', choices=['install', 'upgrade', 'remove'])
+    parser.add_argument('--adapter-port', type=int, default=17899)
+    args = parser.parse_args()
+    if sys.platform != 'darwin' or os.geteuid() == 0:
+        parser.error('Run as the macOS login user.')
+    if not 1 <= args.adapter_port <= 65535:
+        parser.error('Invalid adapter port.')
+    os.umask(0o077)
+    if args.action == 'install':
+        install(args)
+    elif args.action == 'upgrade':
+        upgrade()
+    else:
+        remove(args)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['install', 'upgrade', 'remove'])
-    parser.add_argument('--profile', type=Path)
-    parser.add_argument('--core-config', type=Path)
-    parser.add_argument('--adapter-port', type=int, default=17899)
-    args = parser.parse_args()
-    os.umask(0o077)
     try:
-        if args.action == 'install':
-            if not args.profile or not args.core_config:
-                parser.error('install requires --profile and --core-config')
-            args.profile = args.profile.expanduser().resolve()
-            args.core_config = args.core_config.expanduser().resolve()
-            args.locked = args.profile.with_name(svc.PROFILE + '.yaml')
-            install(args)
-        elif args.action == 'upgrade':
-            upgrade()
-        else:
-            remove(args)
+        main()
     except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as exc:
-        sys.exit('Operation incomplete (' + type(exc).__name__ + '). Check the login agent and controller.')
+        sys.exit('Operation incomplete (' + type(exc).__name__ + '). Check the login agent and migration state.')

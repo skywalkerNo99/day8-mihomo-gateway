@@ -10,12 +10,13 @@
 | 错误密码/文件损坏 | 重新输入；不要试图从模型或 Git 恢复密码。检查密文是否被截断；认证失败不会输出明文 |
 | 本地运行失败 | 检查三个端口是否被占用、`.tools/mihomo -v` 是否可运行、同 checkout 是否已有监督进程；尝试前台 `run`。不要打印完整配置 |
 | status 连接失败 | 监督进程未运行，或 clone 路径太长超过系统 Unix socket 限制；使用更短目录。重启后必须再次解锁 |
-| macOS deploy 不生效 | 检查当前 profile、core-config、loopback controller 认证和 TUN 状态；没有 `--apply` 时只规划。UI/订阅重载会覆盖内存配置 |
+| macOS 安装或迁移不完整 | 使用 `gateway macos preflight` 核验；管理员授权仅在本机终端输入。已有旧兼容安装用 `gateway macos migrate`，不能执行普通 upgrade |
 | 原配置含空值或 emoji 时加载失败 | 更新到当前修复版：可选 mapping 的 YAML null 会被规范化；传给核心的内层配置使用 UTF-8，不生成 YAML 不接受的 surrogate 转义。不要删除用户原有代理名称来绕过问题 |
-| macOS verify 失败 | 给 `--proxy` 指定主 Clash 的实际端口；adapter 模式没有独立 mixed-port。主机原代理与独立网关端口不要混淆 |
+| macOS verify 失败 | `gateway verify` 检查分流核心住宅出口；`gateway macos check` 额外验收系统 TUN、规则关联及 PF。不能以仅有回环成功判定整机部署完成 |
+| 域名路由出现未知命令 | 旧安装尚未迁移；执行 `gateway macos migrate` 后重开 App。完整后台始终支持域名规则、日志和住宅编辑 |
 | 出口不匹配 | verify 保留 `ok: false`，不要接受其他 IP。检查连接是否新建、是否进入目标核心、规则链与严格模式 |
 | HTTP/3/UDP 功能异常 | TCP-only 设计显式 REJECT；可让应用回退 TCP。不要删除 REJECT 造成默认出口泄漏 |
 | 子核心退出 | 监督进程会尝试恢复；已有 TCP 会话需重试。若主监督进程已退出，重新运行并输入密码 |
-| 切换后要回退 | macOS 接入先 `macos restore`，原生独立模式 `stop`；TUN 模式核对系统路由撤销 |
+| 切换后要回退 | macOS 使用 `gateway macos rollback` 停止网关并恢复原网络；不运行兼容服务。Linux 原生独立模式用 `stop` |
 
 CLI 对未知异常采用脱敏错误提示，避免解析错误把配置片段打印出来。需要进一步排查时，在本机用合成测试资料复现；不要直接去掉真实配置场景的脱敏保护。

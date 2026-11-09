@@ -1,4 +1,4 @@
-"""Migrate an enrolled macOS login agent to its own TUN, or restore ClashX."""
+"""Install the single-app TUN or recover the network used before migration."""
 import argparse
 from contextlib import ExitStack
 import gzip
@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
+from types import SimpleNamespace
 import socket
 import subprocess
 import sys
@@ -14,8 +16,9 @@ import tempfile
 import time
 
 import macos_persistent as install
-from day8_gateway import catalog, macos_keychain, residual, runtime, single_app, verify
+from day8_gateway import catalog, controller, macos_keychain, node_updates, residual, runtime, single_app, verify
 from day8_gateway.tun_verify import interface
+from day8_gateway.cli import core_settings
 
 ROOT, HOME = install.ROOT, install.SUPPORT
 MARK = HOME / 'single-app.enabled'
@@ -50,12 +53,70 @@ def wait_for(test, message, seconds=25):
     raise RuntimeError(message)
 
 
-def agent(mode):
+def agent(mode='standalone'):
     install.ctl('kickstart', '-k', install.TARGET)
     wait_for(lambda: runtime.control(HOME, 'status')['mode'] == mode, 'Login agent startup failed.')
 
 
+def authorize():
+    # This runs only in the user's terminal. Password input is never captured.
+    if not sys.stdin.isatty():
+        probe = subprocess.run(['/usr/bin/sudo', '-n', 'true'], capture_output=True)
+        if probe.returncode:
+            raise RuntimeError('Run this operation in a local terminal for administrator authorization.')
+    subprocess.run(['/usr/bin/sudo', '-v'], check=True)
+
+
+def check_ports(include_adapter=None):
+    if 'utun63' in subprocess.check_output(['/sbin/ifconfig', '-l'], text=True).split():
+        raise RuntimeError('utun63 already in use.')
+    with ExitStack() as stack:
+        ports = [single_app.PORT, single_app.CONTROLLER, single_app.HANDOFF]
+        if include_adapter is not None:
+            ports.append(include_adapter)
+        for port in ports:
+            probe = stack.enter_context(socket.socket())
+            probe.bind(('127.0.0.1', port))
+
+
+def previous_session():
+    state = {'hadRunning': session('running', check=False), 'hadLogin': session('login', check=False)}
+    if not state['hadRunning']:
+        # The capture port must also be free when no prior Clash core owns it.
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 7890))
+        return state
+    saved = json.loads(install.STATE.read_text()) if install.STATE.is_file() else {}
+    core = Path(saved.get('core', Path.home() / '.config/clash.meta/config.yaml'))
+    prefs = plistlib.loads(subprocess.check_output(['/usr/bin/defaults', 'export', install.svc.APP_ID, '-']))
+    source = saved.get('source')
+    profile = Path(source) if source else core.parent / (prefs['selectConfigName'] + '.yaml')
+    if not profile.is_file():
+        raise RuntimeError('Previous Clash profile missing; cannot provide safe recovery.')
+    _, url, secret = core_settings(SimpleNamespace(core_config=core))
+    active = controller.request(url, secret, '/configs')
+    if not active.get('tun', {}).get('enable') or active.get('mode') != 'rule':
+        raise RuntimeError('Previous Clash must have TUN and rule mode enabled for migration.')
+    state.update({'profile': str(profile), 'core': str(core)})
+    return state
+
+
+def unlocked():
+    vault = HOME / 'deployment.enc.json'
+    payload = macos_keychain.unlock(vault)
+    key = macos_keychain.read_key(vault)
+    residual.load(HOME, vault, key, payload)
+    node_updates.load_saved(HOME, vault, key, payload)
+    return payload, key
+
+
+def install_binary(package):
+    install.atomic(HOME / 'mihomo', gzip.decompress(package.read_bytes()))
+    (HOME / 'mihomo').chmod(0o700)
+
+
 def compile_session():
+    SESSION.parent.mkdir(mode=0o700, exist_ok=True)
     subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-Wno-deprecated-declarations', '-framework', 'AppKit',
                     '-framework', 'CoreServices', str(ASSETS / 'clash-session.m'), '-o', str(SESSION)], check=True)
 
@@ -102,29 +163,32 @@ def loopback_trial(payload, key, binary):
 
 
 def preflight():
-    vault = HOME / 'deployment.enc.json'
-    payload = macos_keychain.unlock(vault)
-    key = macos_keychain.read_key(vault)
-    residual.load(HOME, vault, key, payload)
-    adapter_port = runtime.control(HOME, 'status')['adapter_port']
-    cfg = single_app.routing(payload, key, adapter_port)
+    payload, key = unlocked()
+    status = runtime.control(HOME, 'status')
     binary = ROOT / '.tools/mihomo'
+    if status['mode'] == 'standalone':
+        loopback_trial(payload, single_app.link_key(key), binary)
+        print('Current single-app handoff and fixed ChatGPT exit passed.', flush=True)
+        return
+    # One-time check for legacy installed agents; no compatibility deployment is created.
+    cfg = single_app.routing(payload, key, status['adapter_port'])
     with tempfile.TemporaryDirectory() as folder:
-        with subprocess.Popen([str(binary), '-d', folder, '-f', '/dev/stdin'], stdin=subprocess.PIPE,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as proc:
-            try:
-                proc.stdin.write(json.dumps(cfg).encode())
-                proc.stdin.close()
-                def ready():
-                    if proc.poll() is not None:
-                        raise ValueError('Trial routing core failed.')
-                    with socket.create_connection(('127.0.0.1', single_app.HANDOFF), timeout=.5):
-                        return True
-                wait_for(ready, 'Trial handoff listener failed.')
-                loopback_trial(payload, single_app.link_key(key), binary)
-            finally:
-                proc.terminate()
-    print('Loopback capture / routing / current Day8 adapter / fixed ChatGPT exit passed.', flush=True)
+        proc = subprocess.Popen([str(binary), '-d', folder, '-f', '/dev/stdin'], stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            proc.stdin.write(json.dumps(cfg).encode())
+            proc.stdin.close()
+            def ready():
+                if proc.poll() is not None:
+                    raise ValueError('Trial routing core failed.')
+                with socket.create_connection(('127.0.0.1', single_app.HANDOFF), timeout=.5):
+                    return True
+            wait_for(ready, 'Trial handoff listener failed.')
+            loopback_trial(payload, single_app.link_key(key), binary)
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+    print('Single-app trial / current Day8 adapter / fixed ChatGPT exit passed.', flush=True)
 
 
 def udp_guard():
@@ -151,6 +215,8 @@ def udp_guard():
 def accept():
     wait_for(lambda: interface('1.1.1.1') == 'utun63', 'Capture service did not take the default route.')
     report = runtime.control(HOME, 'verify-system-tun')
+    # Only predefined hosts, rule names and booleans; never the trace body or exit IP.
+    install.atomic(HOME / '.local/tun-check.json', json.dumps(report).encode())
     print(json.dumps(report, ensure_ascii=False), flush=True)
     if not report['ok']:
         raise RuntimeError('Transparent TUN route or fixed residential exit check failed.')
@@ -159,70 +225,102 @@ def accept():
         raise RuntimeError('ClashX is still active or set to open at login.')
 
 
+def restore_previous(state):
+    if state.get('hadLogin'):
+        session('enable-login')
+    if not state.get('hadRunning', True):
+        return
+    profile = state.get('profile')
+    core = state.get('core')
+    if not profile or not core:
+        # Read old migration records created before the single-app-only installer.
+        settings = json.loads(install.STATE.read_text())
+        profile, core = settings['source'], settings['core']
+    original = Path(profile)
+    if not original.is_file():
+        raise RuntimeError('Original profile is missing; recovery is incomplete.')
+    subprocess.run(['/usr/bin/defaults', 'write', install.svc.APP_ID,
+                    'selectConfigName', '-string', original.stem], check=True)
+    session('open')
+    _, url, secret = core_settings(SimpleNamespace(core_config=Path(core)))
+    wait_for(lambda: controller.request(url, secret, '/version'), 'Previous Clash controller unavailable.', 45)
+    controller.request(url, secret, '/configs?force=true', {'path': str(original)}, 'PUT')
+    wait_for(lambda: controller.request(url, secret, '/configs').get('tun', {}).get('enable'),
+             'Previous Clash TUN did not restore.', 25)
+
+
 def restore():
     state = json.loads(STATE.read_text())
     if state.get('prepared'):
         admin('stop')
-    MARK.unlink(missing_ok=True)
-    agent('adapter')
-    if state.get('hadLogin'):
-        session('enable-login')
-    session('open')
-    wait_for(lambda: runtime.control(HOME, 'verify')['ok'], 'Previous ClashX route failed to restore.', 65)
+    # Never fall back to an adapter-only login service, including after login.
+    install.ctl('disable', install.TARGET)
+    install.stop_agent()
     if state.get('prepared'):
         admin('remove')
+    restore_previous(state)
+    MARK.unlink(missing_ok=True)
+    settings = json.loads(install.STATE.read_text())
+    settings.update({'schema': 2, 'mode': 'single-app'})
+    install.atomic(install.STATE, json.dumps(settings).encode())
     STATE.unlink()
-    print('Previous ClashX + Day8 routing restored and verified.', flush=True)
+    print('Gateway stopped. Previous network restored; compatibility service is not running.', flush=True)
 
 
-def migrate():
-    if STATE.exists() or MARK.exists():
+def migrate(previous=None):
+    if STATE.exists():
         raise RuntimeError('Migration already exists; use check or rollback.')
-    if not session('running', check=False) or runtime.control(HOME, 'status')['mode'] != 'adapter':
-        raise RuntimeError('Start with the enrolled ClashX login service running.')
-    if 'utun63' in subprocess.check_output(['/sbin/ifconfig','-l'], text=True).split():
-        raise RuntimeError('utun63 already in use.')
-    # Existing listeners must never be displaced.
-    with ExitStack() as stack:
-        for port in (single_app.PORT, single_app.CONTROLLER, single_app.HANDOFF):
-            probe = stack.enter_context(socket.socket())
-            probe.bind(('127.0.0.1', port))
+    status = runtime.control(HOME, 'status')
+    if status['mode'] != 'standalone':
+        check_ports()
+    state = dict(previous if previous is not None else previous_session())
+    state['prepared'] = False
     pkg = archive()
-    install.atomic(HOME / 'mihomo', gzip.decompress(pkg.read_bytes()))
-    (HOME / 'mihomo').chmod(0o700)
-    vault = HOME / 'deployment.enc.json'
-    payload = macos_keychain.unlock(vault)
-    vault_key = macos_keychain.read_key(vault)
-    residual.load(HOME, vault, vault_key, payload)
+    install_binary(pkg)
+    payload, vault_key = unlocked()
     key = single_app.link_key(vault_key)
-    state = {'hadLogin': session('login', check=False), 'prepared': False}
     install.atomic(STATE, json.dumps(state).encode())
+    progress = HOME / '.local/migration-result.json'
+    current_stage = 'routing_update'
     try:
+        # Legacy code is replaced only here, after preflight and administrator authorization.
+        install.upgrade(migrating=True)
         install.atomic(MARK, b'1\n')
-        agent('standalone')
         loopback_trial(payload, key, HOME / 'mihomo')
         print('New routing core and authenticated handoff passed ChatGPT exit check.', flush=True)
         print('Installing native capture service and validating PF rules.', flush=True)
+        current_stage = 'capture_prepare'
         admin('prepare', pkg, key=key)
         state['prepared'] = True
         install.atomic(STATE, json.dumps(state).encode())
+        current_stage = 'udp_guard'
         admin('guard')
         udp_guard()
-        if state['hadLogin']:
+        if state.get('hadLogin'):
             session('disable-login')
-        print('Stopping ClashX and starting the system TUN.', flush=True)
-        session('quit')
-        wait_for(lambda: not session('running', check=False), 'ClashX did not quit.')
+        if state.get('hadRunning'):
+            current_stage = 'previous_proxy_quit'
+            print('Stopping previous ClashX and starting the system TUN.', flush=True)
+            session('quit')
+            wait_for(lambda: not session('running', check=False), 'ClashX did not quit.')
+        current_stage = 'capture_start'
         admin('start')
+        current_stage = 'system_acceptance'
         accept()
-        # Exercise both startup jobs with the permanent configuration.
-        agent('standalone')
+        current_stage = 'service_restart'
+        agent()
         admin('restart')
         time.sleep(2)
         accept()
+        settings = json.loads(install.STATE.read_text())
+        settings.update({'schema': 2, 'mode': 'single-app'})
+        install.atomic(install.STATE, json.dumps(settings).encode())
+        install.atomic(progress, json.dumps({'stage': 'complete', 'ok': True}).encode())
         print('Single-app cutover and cold service recovery verified.', flush=True)
-    except BaseException:
-        print('Cutover incomplete; restoring the previous route.', flush=True)
+    except BaseException as exc:
+        install.atomic(progress, json.dumps({'stage': current_stage, 'ok': False,
+                                            'error': type(exc).__name__}).encode())
+        print('Cutover incomplete; stopping gateway and restoring the previous network.', flush=True)
         restore()
         raise
 
@@ -238,7 +336,9 @@ def main():
     if action == 'preflight':
         return preflight()
     compile_session()
-    subprocess.run(['/usr/bin/sudo','-v'], check=True)
+    if action == 'migrate':
+        preflight()
+    authorize()
     {'migrate': migrate, 'rollback': restore, 'check': accept}[action]()
 
 

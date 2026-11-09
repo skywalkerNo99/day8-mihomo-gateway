@@ -10,6 +10,20 @@ from . import catalog, macos_keychain, node_updates, official, runtime
 
 ROOT = Path.home() / 'Library/Application Support/Day8Gateway'
 BASE = ROOT / 'deployment.enc.json'
+CONTAINER_FIELDS = ('{"id":{{json .Id}},"platform":{{json .Platform}},'
+                    '"running":{{json .State.Running}},'
+                    '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+                    '"entrypoint":{{json .Config.Entrypoint}},"command":{{json .Config.Cmd}},'
+                    '"workdir":{{json .Config.WorkingDir}}}')
+
+
+def managed_container(row):
+    command = row.get('command') or []
+    return (row.get('platform') == 'linux' and row.get('running') is True
+            and re.fullmatch('[a-f0-9]{64}', row.get('id', '')) is not None
+            and row.get('entrypoint') == ['python3', 'gateway'] and row.get('workdir') == '/app'
+            and (command[:1] == ['run-container-tun']
+                 or (row.get('service') == 'day8-gateway' and command[:1] == ['run'])))
 
 
 def docker(context, *args, packet=None):
@@ -25,11 +39,14 @@ def docker(context, *args, packet=None):
 def send_packet(context, target, packet):
     if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}', target):
         raise ValueError('Invalid container.')
-    container = docker(context, 'inspect', '--format',
-                       '{{.Id}} {{index .Config.Labels "com.docker.compose.service"}} {{.Platform}}', target).split()
-    if len(container) != 3 or container[1:] != ['day8-gateway','linux'] or not re.fullmatch('[a-f0-9]{64}',container[0]):
+    container = json.loads(docker(context, 'inspect', '--format', CONTAINER_FIELDS, target))
+    if not managed_container(container) or (re.fullmatch('[a-f0-9]{64}', target) and container['id'] != target):
         raise ValueError('Select a Linux gateway container.')
-    docker(context, 'exec', '-i', container[0], 'python3', 'gateway', 'accept-node', packet=packet)
+    if container['command'][:1] == ['run-container-tun']:
+        status = json.loads(docker(context, 'exec', container['id'], 'python3', 'gateway', 'status'))
+        if not status.get('ok') or status.get('node_update_version', 0) < 2:
+            raise ValueError('Upgrade the Linux TUN gateway before updating its node.')
+    docker(context, 'exec', '-i', container['id'], 'python3', 'gateway', 'accept-node', packet=packet)
 
 
 def main(args):
@@ -70,22 +87,25 @@ def main(args):
         return {'ok': True, **catalog.summary(entries, key, active)}
     if action == 'health':
         result = runtime.control(ROOT, 'health')
-        if (ROOT / 'single-app.enabled').is_file():
-            from .tun_verify import interface
-            result['systemTunnel'] = interface('1.1.1.1')
+        from .tun_verify import interface
+        result['systemTunnel'] = interface('1.1.1.1')
         return result
     if action == 'verify':
-        command = 'verify-system-tun' if (ROOT / 'single-app.enabled').is_file() else 'verify'
-        return {'ok': runtime.control(ROOT, command)['ok']}
+        return {'ok': runtime.control(ROOT, 'verify-system-tun')['ok']}
     if action == 'contexts':
         rows = docker('default', 'context', 'ls', '--format', '{{.Name}}').splitlines()
         current = subprocess.run([shutil.which('docker'), 'context', 'show'], text=True, capture_output=True,
                                  timeout=10, check=True).stdout.strip()
         return {'ok': True, 'contexts': rows, 'current': current}
     if action == 'targets':
-        rows = docker(params[0], 'ps', '--no-trunc', '--filter', 'label=com.docker.compose.service=day8-gateway',
+        rows = docker(params[0], 'ps', '--no-trunc',
                       '--format', '{{.Names}} {{.ID}}').splitlines()
         identities = dict(row.split() for row in rows)
+        if identities:
+            inspected = docker(params[0], 'inspect', '--format', CONTAINER_FIELDS, *identities.values())
+            allowed = {row['id'] for line in inspected.splitlines()
+                       if managed_container(row := json.loads(line))}
+            identities = {name: identifier for name, identifier in identities.items() if identifier in allowed}
         return {'ok': True, 'targets': sorted(identities), 'identities': identities}
     if action == 'sync-official':
         node = official.desktop_node()

@@ -6,6 +6,8 @@ WORKDIR /app
 COPY gateway requirements.txt ./
 COPY scripts/mihomo-lock.json scripts/mihomo-lock.json
 RUN python3 gateway bootstrap
+RUN apt-get update && apt-get install -y --no-install-recommends iptables iproute2 \
+    && rm -rf /var/lib/apt/lists/*
 COPY src src
 COPY rules rules
 RUN mkdir -p secrets .local && chmod 700 .local

@@ -1,5 +1,26 @@
 # Linux 容器
 
+## 单容器 TUN 与共享网络命名空间
+
+业务容器通过 `network_mode: service:proxy` 使用代理网络时，使用 `compose.tun.yaml`。常驻的 `proxy` 容器内同时运行 Python 监督器、Muon TCP 适配器和 mihomo TUN；住宅第二跳也由这个 mihomo 处理。
+
+```sh
+docker compose -f compose.tun.yaml build proxy
+docker compose -f compose.tun.yaml run --rm enroll
+docker compose -f compose.tun.yaml up -d proxy
+docker compose -f compose.tun.yaml exec -T proxy python3 gateway verify
+```
+
+将实际业务服务的 `network_mode` 设置为 `service:proxy`，并等待 `proxy` 的健康检查通过。业务服务共享 TUN 的网络命名空间。Apple/OpenAI 专用目标优先使用 Day8 → 住宅第二跳；其余 `.cn` 域名及 CN 网段目标（包括裸 IP）使用容器上联网卡 DIRECT；剩余公网 TCP 使用 Day8。国内网段和 Mac 使用同一份 `cn-networks` 数据及匹配规则。
+
+代理监听本命名空间的 `127.0.0.1:7890`，DNS 监听 `127.0.0.1:1053`。容器启动时安装 TCP/UDP 53 的 DNS 重定向和 `DAY8_UDP` 出口链，允许回环、局域网和组播 UDP，拒绝公网 UDP。容器 sysctl 关闭 IPv6，避免 IPv6 UDP 绕行。
+
+此模式需要 `/dev/net/tun`、`NET_ADMIN` 和独立的 Docker 网络命名空间。使用仓库提供的 namespaced sysctl；不要设为 `network_mode: host`。运行命令为 `run-container-tun`，首次登记后使用只读密钥卷自动解锁。重建共享网络的代理时，也要重建引用它的业务容器，提前结束业务中的运行任务并保留数据及回退配置。
+
+验收应从业务容器发起 ChatGPT trace 并在内存中比较预期出口，再验证普通 HTTPS；还要验证本命名空间的 UDP 拒绝计数和重启自动解锁。原业务镜像、挂载和停止后的原容器可保留用于回退。恢复时先停止新业务与新代理，再启动原代理和原业务。
+
+## 显式应用代理
+
 在目标 Linux 主机安装 Docker Engine 和 Compose，克隆仓库。从仓库根目录运行：
 
 ```sh
@@ -55,6 +76,10 @@ docker compose exec -T day8-gateway python3 gateway monitor --once --json
 docker compose logs -f --tail 30 day8-gateway
 ```
 
-monitor 每 30 秒分别对 Day8 第一跳和 Day8 → 1024 住宅出站发起 HTTPS 探测。单次模式在任一路径探测失败时返回非零退出码。连接输出来自实际 mihomo 核心，例如 `[TCP] chatgpt.com:443 via Residual-egress`。业务域名可能出现在日志中，节点地址会被遮蔽。通过实际目标服务验证住宅出口使用 `python3 gateway verify`。
+monitor 每 30 秒分别对 Day8 第一跳和 Day8 → 1024 住宅出站发起 HTTPS 探测。单次模式在任一路径探测失败时返回非零退出码。连接输出来自实际 mihomo 核心，每条使用东八区 `UTC+08:00` 日期、时间和毫秒，例如 `2026-11-09T12:00:00.123+08:00 [TCP] chatgpt.com:443 via Residual-egress`。业务域名可能出现在日志中，上游节点的引导连接记录会被过滤。通过实际目标服务验证住宅出口使用 `python3 gateway verify`。
 
-Mac 管理 App 使用现有 Docker Context 选择目标。运行在远程 Linux 时，先在 Mac 上配置指向受管主机的 SSH Context，例如 `docker context create my-gateway --docker host=ssh://user@host`。更新前在目标项目中运行 `docker compose up -d --build day8-gateway`。新 Compose 中的 state 卷保留已认证的节点更新，重建后也会加载。密钥卷、密文和更新包须对应同一份基础 vault。目标更新失败时保留原配置；运营环境使用实际 SSH 主机和具体容器名。
+Mac 管理 App 的「Linux 容器」页面通过 Docker Context 查找运行中的网关。它支持 `run-container-tun` 单容器部署以及原有 `day8-gateway` 显式代理服务，业务 Compose 服务可以使用自己的名称。页面按容器 ID 记录目标，推送时再次检查运行状态及网关入口，避免重建后向同名的其他容器推送。
+
+远程 Linux 可配置 SSH Context，例如 `docker context create my-gateway --docker host=ssh://user@host`。在页面选择 Context，点击「查找容器」，选择目标，再点击「将本机当前 Day8 线路应用到此容器」。App 将当前本机 Day8 线路封装成认证加密包，经容器 stdin 交给网关；住宅配置、路由策略和预期出口继续使用远端已登记的配置。更新通过远端 ChatGPT 出口核验后，加密保存到 state 卷，重启时重新加载。
+
+单容器 TUN 需要支持节点更新版本 2 的镜像，App 会在推送前检查。TUN 更新会先保留新旧节点的引导直连规则，核验新节点后提交新规则；失败时恢复原节点及规则。升级镜像后要同时重建共享该网络命名空间的业务容器。密钥卷、密文和更新包须对应同一份基础 vault。
