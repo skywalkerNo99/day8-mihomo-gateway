@@ -19,8 +19,7 @@ def link_key(key):
 def routing(payload, key, adapter_port):
     cfg = config.native(payload, PORT, adapter_port, CONTROLLER)
     cfg['log-level'] = 'info'
-    networks = (config.RULES_DIR / 'cn-networks.txt').read_text('ascii').splitlines()
-    cfg['rule-providers']['cn-networks'] = {'type': 'inline', 'behavior': 'ipcidr', 'payload': networks}
+    cfg['rule-providers']['cn-networks'] = config.mainland_provider()
     cfg['listeners'] = [{'name': 'system-tun', 'type': 'shadowsocks',
                          'listen': '127.0.0.1', 'port': HANDOFF, 'udp': False,
                          'cipher': 'aes-128-gcm', 'password': link_key(key)}]

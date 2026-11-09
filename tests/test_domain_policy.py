@@ -61,7 +61,7 @@ class RulesTests(unittest.TestCase):
                 defaults = policy.render([], interface)
                 self.assertEqual(defaults['proxies'], parts['proxies'])
                 self.assertEqual(defaults['rules'][-4:], ['DOMAIN-SUFFIX,cn,' + route,
-                    'AND,((DOMAIN-REGEX,.+),(RULE-SET,cn-networks)),' + route, *cfg['rules'][-2:]])
+                    'RULE-SET,cn-networks,' + route, *cfg['rules'][-2:]])
                 self.assertLess(idx, rules.index('DOMAIN-SUFFIX,cn,' + route))
 
     def test_rule_injection_and_ip_rejected(self):
@@ -75,7 +75,7 @@ class RulesTests(unittest.TestCase):
 class JournalTests(unittest.TestCase):
     def test_china_ip_rule_in_connection_log(self):
         journal = monitor.DomainJournal()
-        matched = 'And(((DomainRegex,.+) && (RuleSet,cn-networks)))'
+        matched = 'RuleSet(cn-networks)'
         journal.append(f'[TCP] 127.0.0.1:19000 --> cdn.test:443 match {matched} using Physical-direct', [])
         entry, = journal.search('cdn.test')['events']
         self.assertEqual((entry['route'], entry['matched']), ('DIRECT', matched))

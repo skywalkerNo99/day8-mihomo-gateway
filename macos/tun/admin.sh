@@ -60,7 +60,21 @@ guard)
     echo "$value" > "$token"
     ;;
 start) launchctl bootstrap system "$job" ;;
-restart) launchctl kickstart -k "system/$label" ;;
+restart)
+    # A normal shutdown commits fake-IP mappings before launchd's KeepAlive restart.
+    pid_of_core() { launchctl print "system/$label" | awk '$1=="pid" && $2=="=" {print $3;exit}'; }
+    previous=$(pid_of_core)
+    [ -n "$previous" ] || exit 1
+    launchctl kill SIGTERM "system/$label"
+    tries=0
+    while [ "$tries" -lt 100 ]; do
+        current=$(pid_of_core)
+        if [ -n "$current" ] && [ "$current" != "$previous" ]; then exit 0; fi
+        tries=$((tries+1))
+        sleep .25
+    done
+    exit 1
+    ;;
 stop) if launchctl print "system/$label" >/dev/null 2>&1; then launchctl bootout "system/$label"; fi ;;
 remove)
     if launchctl print "system/$label" >/dev/null 2>&1; then launchctl bootout "system/$label"; fi

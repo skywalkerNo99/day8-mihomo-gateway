@@ -1,6 +1,6 @@
-# macOS / Linux 独立原生运行
+# Linux 独立原生运行与回环诊断
 
-两端都运行原生 mihomo + 原生 Python 适配器，不需要 Day8 客户端或容器。需要 Python 3.11+、Git、curl；Linux 安装对应发行版的 `python3-venv`。Linux libc/wheel 不兼容时优先用常见 glibc 发行版，或可选 Linux 容器。bootstrap 不安装系统包、不修改系统路由。
+Linux 运行原生 mihomo + 原生 Python 适配器，不需要 Day8 客户端或容器。macOS 正式部署只使用[单 App](macos.md)，本页回环命令仅供独立诊断，不得与已安装单 App 的固定端口冲突。需要 Python 3.11+、Git、curl；Linux 安装对应发行版的 `python3-venv`。Linux libc/wheel 不兼容时优先用常见 glibc 发行版，或可选 Linux 容器。bootstrap 不安装系统包、不修改系统路由。
 
 ```sh
 python3 gateway bootstrap
@@ -23,7 +23,7 @@ python3 gateway bootstrap
 curl --noproxy '' --proxy http://127.0.0.1:17890 https://chatgpt.com/cdn-cgi/trace
 ```
 
-上面的 curl 会直接显示真实出口；不要把输出提交到仓库。`gateway verify` 只报告是否匹配预期值，适合保留脱敏验收记录。主 Clash 在另一端口继续工作时，可用此模式隔离验收。
+上面的 curl 会直接显示真实出口；不要把输出提交到仓库。`gateway verify` 只报告是否匹配预期值，适合保留脱敏验收记录。已有主代理运行时，使用不同回环端口隔离验收。
 
 如果默认端口被占用：
 
@@ -46,4 +46,4 @@ curl --noproxy '' --proxy http://127.0.0.1:17890 https://chatgpt.com/cdn-cgi/tra
 
 ## 整机 TUN
 
-当前适配器仅实现 TCP，`run --tun` 会在启动前报告阻塞原因。待两条路径完成 UDP 验收后，还要在目标主机核对 IPv4/IPv6 路由、DNS 劫持和系统代理例外。Linux 容器发布 TCP mixed-port 适用于当前隔离验证。
+当前适配器仅实现 TCP。Linux 共享业务网络的单容器部署使用 [容器 TUN 模式](container.md)，由 `run-container-tun` 配置 DNS 接管、公网 UDP 拒绝和命名空间约束。宿主机原生 `run --tun` 需要另外核对 IPv4/IPv6 路由、DNS 和 UDP 出口，不能直接沿用容器验收结果。

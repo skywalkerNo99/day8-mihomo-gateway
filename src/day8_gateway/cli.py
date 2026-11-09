@@ -6,10 +6,11 @@ import logging
 import os
 from pathlib import Path
 import sys
+import subprocess
 import time
 import yaml
 
-from . import config, container_key, controller, node_updates, runtime, vault
+from . import config, container_key, linux_tun, node_updates, runtime, vault
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,6 +68,9 @@ def main():
     run.add_argument('--connection-logs', action='store_true', help='Print filtered Mihomo connection events to stdout')
     run.add_argument('--detach', action='store_true')
     run.add_argument('--tun', action='store_true', help='Explicitly enable system TUN; requires elevated OS privileges')
+    container_tun = commands.add_parser('run-container-tun', help='Run the complete gateway in a dedicated Linux container network namespace')
+    native_args(container_tun)
+    container_tun.set_defaults(port=7890, tun=True, auto_unlock=True, connection_logs=True, detach=False)
     mon = commands.add_parser('monitor', help='Probe both outbounds every 30 seconds')
     mon.add_argument('--once', action='store_true')
     mon.add_argument('--json', action='store_true', help='Print one JSON object per sample')
@@ -74,23 +78,18 @@ def main():
     commands.add_parser('status')
     commands.add_parser('stop')
     verify = commands.add_parser('verify')
-    verify.add_argument('--proxy', help='Loopback HTTP/SOCKS proxy, e.g. http://127.0.0.1:7890 for macOS host Clash')
-    mac = commands.add_parser('macos', help='Use the existing native Clash/Mihomo core with a native adapter')
-    mac.add_argument('action', choices=['plan', 'deploy', 'restore'])
-    mac.add_argument('--profile', type=Path, required=True, help='Existing on-disk original Clash profile')
-    mac.add_argument('--core-config', type=Path, required=True, help='Existing core config containing controller/secret')
-    mac.add_argument('--adapter-port', type=int, default=17889)
-    mac.add_argument('--strict', action='store_true', help='Route all public TCP traffic through residual; strongest domain coverage')
-    mac.add_argument('--block-public-udp', action='store_true',
-                     help='Deploy the Day8-default split with unsupported public UDP rejected')
-    mac.add_argument('--apply', action='store_true', help='Explicit authorization to hot-apply the in-memory configuration')
+    verify.add_argument('--proxy', help='Explicit loopback HTTP/SOCKS proxy; macOS routing core defaults to port 17890')
+    mac = commands.add_parser('macos', help='Install or manage the macOS single-app TUN')
+    mac.add_argument('action', choices=['install', 'migrate', 'preflight', 'check', 'rollback', 'upgrade', 'remove'])
     args = parser.parse_args()
     args.root = ROOT
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(message)s')
 
-    if (args.command == 'macos' and args.action == 'deploy' and args.apply and not (args.strict or args.block_public_udp)
-            or args.command == 'run' and args.tun):
-        raise UserError('当前 Muon 适配器仅支持 TCP，尚不能部署要求 UDP 的整机分流。请用 run 在回环验证。')
+    if args.command == 'macos':
+        script = 'macos_persistent.py' if args.action in ('install', 'upgrade', 'remove') else 'macos_takeover.py'
+        return subprocess.run([sys.executable, 'scripts/' + script, args.action], cwd=ROOT).returncode
+    if args.command == 'run' and args.tun:
+        raise UserError('整机 TUN 请使用 gateway macos install；Linux 请按原生部署文档操作。')
 
     if args.command == 'seal':
         if args.vault.exists():
@@ -122,7 +121,7 @@ def main():
         if sys.platform == 'darwin' and (managed / 'installation.json').exists() and not (ROOT / '.local/control.sock').exists():
             root = managed
             if args.command == 'stop':
-                raise UserError('登录服务由 launchd 管理。恢复原配置请使用 scripts/macos_persistent.py remove。')
+                raise UserError('登录服务由 launchd 管理。回退请使用 gateway macos rollback，卸载用 gateway macos remove。')
         if args.command == 'monitor':
             while True:
                 try:
@@ -150,7 +149,7 @@ def main():
         print(json.dumps(result, indent=2))
         if not result.get('ok'):
             return 1
-    elif args.command == 'run':
+    elif args.command in ('run', 'run-container-tun'):
         if args.tun and os.geteuid() != 0:
             raise ValueError('TUN requires explicit root/CAP_NET_ADMIN setup. Start without --tun for local proxy mode.')
         if not args.mihomo.is_file():
@@ -168,57 +167,10 @@ def main():
         else:
             payload = unlock(args)
         cfg = config.native(payload, args.port, args.adapter_port, args.controller_port, args.tun, args.bind)
+        if args.command == 'run-container-tun':
+            linux_tun.configure(cfg)
+            linux_tun.prepare()
         runtime.start(payload, cfg, args, args.detach)
-    elif args.command == 'macos':
-        base, url, secret = core_settings(args)
-        if args.action in ('restore', 'deploy') and (Path.home() / 'Library/Application Support/Day8Gateway/installation.json').is_file():
-            raise UserError('已安装登录服务。回退请运行 .venv/bin/python scripts/macos_persistent.py remove。')
-        if args.action == 'restore':
-            # Reloading the untouched original is explicit in the restore command.
-            controller.request(url, secret, '/configs?force=true', {'path': str(args.profile.expanduser().resolve())}, 'PUT')
-            try:
-                status = runtime.control(ROOT, 'status')
-                if status.get('mode') == 'adapter':
-                    runtime.control(ROOT, 'stop')
-            except OSError:
-                pass
-            print('Original on-disk profile restored; native adapter stopped.')
-            return 0
-        payload = unlock(args)
-        base.update(read_yaml(args.profile))
-        if args.action == 'deploy' and args.apply:
-            current = controller.request(url, secret, '/configs')
-            if not current.get('tun', {}).get('enable'):
-                raise UserError('请先启用主 Clash 的 TUN，再部署整机分流。')
-            base['tun'] = {**(base.get('tun') or {}), 'enable': True}
-        cfg = config.macos(payload, base, ROOT / 'rules', args.adapter_port, args.strict)
-        cfg['external-controller'] = url.removeprefix('http://')
-        cfg['secret'] = secret
-        if args.action == 'plan' or not args.apply:
-            print(json.dumps({'mode': 'strict' if args.strict else 'day8-default', 'native_adapter': True,
-                              'rules': len(cfg['rules']), 'inline_providers': len(cfg['rule-providers']), 'public_udp': 'rejected', 'host_routing_changed': False}, indent=2))
-            return 0
-        runtime.start(payload, None, args, detach=True)
-        try:
-            controller.apply(url, secret, cfg)
-            active = controller.request(url, secret, '/configs')
-            if not active.get('tun', {}).get('enable') or active.get('mode') != 'rule':
-                raise RuntimeError('Host settings differ from the requested policy.')
-            port = active.get('mixed-port') or active.get('port')
-            result = runtime.control(ROOT, 'verify', proxy=f'http://127.0.0.1:{port}')
-            if not result.get('ok'):
-                raise RuntimeError('ChatGPT exit verification failed.')
-        except BaseException:
-            try:
-                controller.request(url, secret, '/configs?force=true',
-                                   {'path': str(args.profile.expanduser().resolve())}, 'PUT')
-            except Exception:
-                raise UserError('切换验证失败，恢复原 profile 也失败。请运行 macos restore。') from None
-            runtime.control(ROOT, 'stop')
-            raise UserError('切换或出口验证失败，已恢复原 profile。') from None
-        print('TUN rule mode active. Three ChatGPT HTTPS checks matched the expected exit.')
-        print('Native two-hop policy applied in memory. Original profile file was not modified.')
-        print('After a core/app restart, run deploy again and enter the vault password.')
     return 0
 
 

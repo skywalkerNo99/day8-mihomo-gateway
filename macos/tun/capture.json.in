@@ -1,5 +1,6 @@
 {
   "mode": "rule", "log-level": "warning", "allow-lan": false,
+  "profile": {"store-fake-ip": true},
   "mixed-port": 7890, "bind-address": "127.0.0.1", "ipv6": true,
   "tun": {"enable": true, "device": "utun63", "stack": "system", "auto-route": true,
           "auto-detect-interface": true, "dns-hijack": ["any:53","tcp://any:53"],

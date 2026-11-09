@@ -1,5 +1,4 @@
 """Build native Mihomo configs from an unlocked profile, entirely in memory."""
-import copy
 import ipaddress
 import json
 from pathlib import Path
@@ -37,6 +36,15 @@ LOCAL_NETS = ('127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
               '169.254.0.0/16', '::1/128', 'fc00::/7', 'fe80::/10')
 
 
+def mainland_provider():
+    return {'type': 'inline', 'behavior': 'ipcidr',
+            'payload': (RULES_DIR / 'cn-networks.txt').read_text('ascii').splitlines()}
+
+
+def mainland_rules(outbound):
+    return [f'DOMAIN-SUFFIX,cn,{outbound}', f'RULE-SET,cn-networks,{outbound}']
+
+
 def bootstrap(payload):
     day8 = payload['day8']
     try:
@@ -45,6 +53,20 @@ def bootstrap(payload):
     except ValueError:
         target = f"DOMAIN,{day8['server']}"
     return f"AND,((NETWORK,TCP),(DST-PORT,{day8['port']}),({target})),DIRECT"
+
+
+def node_update(cfg, payload, node):
+    """Keep both bootstrap targets reachable while verifying a TUN node change."""
+    previous = bootstrap(payload)
+    replacement = bootstrap({**payload, 'day8': node})
+    if not (cfg.get('tun') or {}).get('enable') or previous == replacement:
+        return cfg, cfg
+    position = cfg['rules'].index(previous)
+    rules = list(cfg['rules'])
+    rules[position] = replacement
+    updated = {**cfg, 'rules': rules}
+    staged = {**updated, 'rules': rules[:position] + [previous] + rules[position:]}
+    return updated, staged
 
 
 def nodes(payload, adapter_port):
@@ -56,7 +78,7 @@ def nodes(payload, adapter_port):
     ]
 
 
-def apply_routes(cfg, payload, adapter_port, rules_dir, strict=False):
+def apply_routes(cfg, payload, adapter_port, rules_dir):
     has_tun = (cfg.get('tun') or {}).get('enable')
     rules = []
     if has_tun:
@@ -77,13 +99,12 @@ def apply_routes(cfg, payload, adapter_port, rules_dir, strict=False):
         'apple-ips': {'type': 'inline', 'behavior': 'ipcidr', 'payload': APPLE_IPS},
     }
     rules.append('NETWORK,UDP,REJECT')
-    if not strict:
-        for name in cfg['rule-providers']:
-            suffix = ',no-resolve' if name == 'apple-ips' else ''
-            rules.extend(f'RULE-SET,{name},{out}{suffix}' for out in (EGRESS, 'REJECT'))
-    cfg['rules'] = [*rules, f'MATCH,{EGRESS if strict else TRANSPORT}', 'MATCH,REJECT']
+    for name in cfg['rule-providers']:
+        suffix = ',no-resolve' if name == 'apple-ips' else ''
+        rules.extend(f'RULE-SET,{name},{out}{suffix}' for out in (EGRESS, 'REJECT'))
+    cfg['rules'] = [*rules, f'MATCH,{TRANSPORT}', 'MATCH,REJECT']
     cfg['mode'] = 'rule'
-    # Retain the GUI's DNS listener, retire resolver overrides from the old subscription.
+    # Keep explicit DNS listener settings when constructing a native config.
     dns = cfg.get('dns') or {}
     cfg['dns'] = {k: dns[k] for k in ('listen', 'fake-ip-range') if k in dns}
     cfg['dns'].update({'enable': True, 'enhanced-mode': 'fake-ip', 'ipv6': False,
@@ -102,8 +123,3 @@ def native(payload, port=17890, adapter_port=17889, controller_port=17891, tun=F
            'secret': secrets.token_hex(24), 'tun': {'enable': tun, 'stack': 'system', 'auto-route': True,
            'auto-detect-interface': True, 'dns-hijack': ['any:53', 'tcp://any:53']}}
     return apply_routes(cfg, payload, adapter_port, RULES_DIR)
-
-
-def macos(payload, original, rules_dir, adapter_port=17889, strict=False):
-    validate(payload)
-    return apply_routes(copy.deepcopy(original), payload, adapter_port, rules_dir, strict)

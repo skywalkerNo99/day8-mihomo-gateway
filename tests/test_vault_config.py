@@ -1,4 +1,3 @@
-import copy
 import json
 import os
 from pathlib import Path
@@ -64,39 +63,23 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(cfg['proxies'][0]['server'], '127.0.0.1')
         self.assertNotEqual(cfg['secret'], config.native(fixture())['secret'])
 
-    def test_split_replaces_old_routes_and_preserves_original_for_restore(self):
-        original = {'proxies': [{'name': 'existing', 'type': 'direct'}], 'rules': ['MATCH,existing'], 'tun': {'enable': True}}
-        before = copy.deepcopy(original)
-        cfg = config.macos(fixture(), original, Path(__file__).resolve().parents[1] / 'rules')
-        self.assertEqual(original, before)
-        self.assertTrue(cfg['tun']['enable'])
-        self.assertNotIn('MATCH,existing', cfg['rules'])
-        self.assertEqual(cfg['rules'][-2:], ['MATCH,Day8-native', 'MATCH,REJECT'])
+    def test_residential_routes_reject_failure_and_use_day8_dns(self):
+        cfg = config.native(fixture())
         for name in cfg['rule-providers']:
             suffix = ',no-resolve' if name == 'apple-ips' else ''
             index = cfg['rules'].index(f'RULE-SET,{name},Residual-egress{suffix}')
             self.assertEqual(cfg['rules'][index+1], f'RULE-SET,{name},REJECT{suffix}')
         self.assertEqual(cfg['dns']['nameserver'], ['https://1.1.1.1/dns-query#Day8-native'])
+
     def test_tun_blocks_residential_udp_before_lan_direct(self):
-        for cfg in (config.native(fixture(), tun=True),
-                    config.macos(fixture(), {'tun': {'enable': True}}, config.RULES_DIR, strict=True)):
-            rules = cfg['rules']
-            guard = rules.index('AND,((NETWORK,UDP),(RULE-SET,residential-domains)),REJECT')
-            self.assertTrue(all(guard < index for index, rule in enumerate(rules) if ',DIRECT' in rule))
+        rules = config.native(fixture(), tun=True)['rules']
+        guard = rules.index('AND,((NETWORK,UDP),(RULE-SET,residential-domains)),REJECT')
+        self.assertTrue(all(guard < index for index, rule in enumerate(rules) if ',DIRECT' in rule))
 
-    def test_strict_cannot_fall_back_to_old_vpn(self):
-        cfg = config.macos(fixture(), {'rules': ['MATCH,old-vpn']}, Path(__file__).resolve().parents[1] / 'rules', strict=True)
-        self.assertEqual(cfg['rules'][-2:], ['MATCH,Residual-egress', 'MATCH,REJECT'])
-        self.assertNotIn('MATCH,old-vpn', cfg['rules'])
-        self.assertIn('NETWORK,UDP,REJECT', cfg['rules'])
-
-    def test_existing_profile_with_null_optional_sections(self):
-        original = {'rule-providers': None, 'dns': None, 'sniffer': None, 'rules': ['MATCH,DIRECT']}
-        cfg = config.macos(fixture(), original, Path(__file__).resolve().parents[1] / 'rules', strict=True)
-        self.assertEqual(len(cfg['rule-providers']), 2)
-        self.assertTrue(cfg['dns']['enable'])
-        self.assertTrue(cfg['sniffer']['enable'])
-        self.assertIsNone(original['sniffer'])
+    def test_legacy_macos_config_and_strict_mode_are_not_exposed(self):
+        self.assertFalse(hasattr(config, 'macos'))
+        with self.assertRaises(TypeError):
+            config.native(fixture(), strict=True)
 
 
 if __name__ == '__main__':

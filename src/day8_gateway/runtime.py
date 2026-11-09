@@ -28,6 +28,8 @@ def control(root, command, **kwargs):
 
 
 async def serve(payload, cfg, args, ready_fd=None):
+    if cfg is None:
+        raise ValueError('A complete native routing config is required.')
     root = Path(args.root)
     local = root / '.local'
     local.mkdir(mode=0o700, exist_ok=True)
@@ -66,15 +68,17 @@ async def serve(payload, cfg, args, ready_fd=None):
     monitor = uplink_monitor = None
     socket_path = local / 'control.sock'
     restarts = 0
+    hidden_upstreams = {payload['day8']['server'], payload['residual']['server']}
 
     async def log_connections(stream):
         while line := await stream.readline():
-            hidden = [payload['day8']['server'], payload['residual']['server']]
+            hidden_upstreams.update((payload['day8']['server'], payload['residual']['server']))
+            hidden = hidden_upstreams
             text = line.decode(errors='replace')
             if journal is not None:
                 journal.append(text, hidden)
             if getattr(args, 'connection_logs', False):
-                entry = metrics.connection_line(text, hidden)
+                entry = metrics.timestamped_connection_line(text, hidden)
                 if entry:
                     print(entry, flush=True)
 
@@ -136,11 +140,7 @@ async def serve(payload, cfg, args, ready_fd=None):
                 raise RuntimeError('Mihomo restart failed; unlock and start again.') from None
 
     def endpoint():
-        if cfg:
-            return f'http://127.0.0.1:{args.controller_port}', cfg['secret']
-        from .cli import core_settings
-        _, url, secret = core_settings(args)
-        return url, secret
+        return f'http://127.0.0.1:{args.controller_port}', cfg['secret']
 
     async def watch_direct_interface():
         while not stop.is_set():
@@ -153,7 +153,6 @@ async def serve(payload, cfg, args, ready_fd=None):
 
     async def apply_node(packet):
         nonlocal current_node
-        from . import macos_service
         key = args.update_key
         candidate = node_updates.unseal(args.vault, key, payload, packet)
         async with update_lock:
@@ -165,20 +164,28 @@ async def serve(payload, cfg, args, ready_fd=None):
             old = payload['day8']
             previous = current_node
             proxy = f"http://127.0.0.1:{live['mixed-port']}"
+            updated, staged = config.node_update(cfg, payload, candidate)
+            hidden_upstreams.add(candidate['server'])
             try:
+                if staged is not cfg:
+                    await asyncio.to_thread(controller.apply, url, secret, staged)
                 current_node = make_node(candidate)
                 payload['day8'] = candidate
-                if cfg is None:
-                    await asyncio.to_thread(macos_service.apply_policy, payload, args, url, secret)
                 test = await asyncio.to_thread(verify.check, proxy, payload['expected_exit_ip'], 1)
                 if not test['ok']:
                     raise ValueError('Exit verification failed.')
+                if updated is not cfg:
+                    await asyncio.to_thread(controller.apply, url, secret, updated)
                 node_updates.save(local / 'node.enc', packet)
+                cfg.update(updated)
             except BaseException:
                 current_node = previous
                 payload['day8'] = old
-                if cfg is None:
-                    await asyncio.to_thread(macos_service.apply_policy, payload, args, url, secret)
+                if staged is not cfg:
+                    try:
+                        await asyncio.to_thread(controller.apply, url, secret, cfg)
+                    except Exception:
+                        stop.set()
                 raise
         return {'ok': True}
 
@@ -222,9 +229,9 @@ async def serve(payload, cfg, args, ready_fd=None):
             message = json.loads(await asyncio.wait_for(reader.readline(), 5))
             command = message.get('command')
             if command == 'status':
-                result = {'ok': True, 'pid': os.getpid(), 'mode': 'adapter' if cfg is None else 'standalone',
+                result = {'ok': True, 'pid': os.getpid(), 'mode': 'standalone',
                           'adapter_port': args.adapter_port, 'mihomo_pid': child.pid if child else None,
-                          'mihomo_restarts': restarts, 'proxy_port': args.port if cfg else None}
+                          'mihomo_restarts': restarts, 'proxy_port': args.port, 'node_update_version': 2}
                 if hasattr(args, 'update_key'):
                     result['route_token'] = catalog.token(args.update_key, current_node.config)
             elif command == 'route-delays' and hasattr(args, 'probes'):
@@ -278,12 +285,7 @@ async def serve(payload, cfg, args, ready_fd=None):
             elif command == 'verify':
                 proxy = message.get('proxy')
                 if not proxy:
-                    if cfg is not None:
-                        port = args.port
-                    else:
-                        live = await asyncio.to_thread(controller.request, *endpoint(), '/configs')
-                        port = live['mixed-port']
-                    proxy = f'http://127.0.0.1:{port}'
+                    proxy = f'http://127.0.0.1:{args.port}'
                 # The local socket is 0600 and never exposes the unlocked profile.
                 if not proxy.startswith(('http://127.0.0.1:', 'socks5h://127.0.0.1:')):
                     raise ValueError('Verification proxy must be loopback.')
