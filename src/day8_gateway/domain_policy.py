@@ -11,6 +11,7 @@ from . import config, node_updates
 
 KINDS = {'exact': 'DOMAIN', 'suffix': 'DOMAIN-SUFFIX', 'keyword': 'DOMAIN-KEYWORD'}
 TARGETS = (config.TRANSPORT, config.EGRESS, 'DIRECT', 'REJECT')
+DIRECT_DNS = 'https://223.5.5.5/dns-query'
 AAD = b'day8-local-domain-policy-v1'
 LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?')
 
@@ -41,6 +42,7 @@ class Policy:
         self.key = key
         self.base = list(cfg['rules'])
         self.proxies = list(cfg['proxies'])
+        self.dns = dict(cfg['dns'])
         self.builtin = cfg['rule-providers']['residential-domains']['payload']
         self.rows = []
         if path.exists():
@@ -97,10 +99,15 @@ class Policy:
 
     def render(self, rows, interface):
         proxies = list(self.proxies)
+        dns = dict(self.dns)
         if interface:
             proxies.append({'name': 'Physical-direct', 'type': 'direct', 'udp': False,
                             'interface-name': interface})
-        return {'proxies': proxies, 'rules': self.rules(rows, interface)}
+            # Resolve DIRECT destinations through the same physical uplink, so
+            # CDN selection does not inherit the VPN resolver's network location.
+            dns['direct-nameserver'] = [DIRECT_DNS + '#Physical-direct']
+            dns['direct-nameserver-follow-policy'] = False
+        return {'proxies': proxies, 'rules': self.rules(rows, interface), 'dns': dns}
 
     def rules(self, rows, interface=None):
         # Built-in residential rules and UDP rejection always precede local overrides.

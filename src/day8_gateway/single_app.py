@@ -18,6 +18,8 @@ def link_key(key):
 
 def routing(payload, key, adapter_port):
     cfg = config.native(payload, PORT, adapter_port, CONTROLLER)
+    # Use SNI/Host for policy without replacing an application's chosen CDN IP.
+    cfg['sniffer']['override-destination'] = False
     cfg['log-level'] = 'info'
     cfg['rule-providers']['cn-networks'] = config.mainland_provider()
     cfg['listeners'] = [{'name': 'system-tun', 'type': 'shadowsocks',

@@ -46,6 +46,12 @@ launchctl print "gui/$(id -u)/io.day8gateway.macos"
 
 系统核心在仅管理员可访问的工作目录保存域名与虚拟 IP 的对应关系。维护重启使用 SIGTERM，使核心可以保存映射。
 
+两层核心的域名嗅探只用于分流，均设置 `override-destination: false`，保留应用直接指定的真实目标 IP，避免将微信等 CDN 自行选择的服务器替换为域名重新解析出的服务器。虚拟 IP 仍由系统核心还原为域名；Apple/OpenAI 的域名嗅探及住宅规则继续生效。
+
+旧安装应用此修复时需同时更新系统捕获配置并保留回退副本；`macos upgrade` 只更新用户登录服务。系统核心按上述 SIGTERM 方式重启后，运行 `./gateway macos check` 复验。
+
+直连出口使用国内 DoH `https://223.5.5.5/dns-query`，DNS 查询同样绑定当前物理上联网卡，避免直连的飞书、微信等域名使用 VPN 侧解析结果选到不同区域的服务器。默认 DNS 仍经 Day8，Apple/OpenAI 的住宅规则优先匹配。物理网卡不可用时，直连规则拒绝出站。
+
 ## 故障恢复
 
 ```sh
