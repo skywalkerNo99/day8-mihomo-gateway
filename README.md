@@ -17,11 +17,11 @@ python3 gateway bootstrap
 - **Linux 容器**：[Linux 容器](docs/container.md)。`compose.tun.yaml` 将 TUN、Muon 和住宅分流放入同一个代理容器，业务容器共享其网络；`compose.yaml` 提供显式应用代理。
 - **让模型接手部署**：先读 [AGENTS.md](AGENTS.md)，再按对应平台文档；不要向模型发送密码。
 
-## Apple / ChatGPT / OpenAI 路由范围
+## Apple / ChatGPT / OpenAI / Claude 路由范围
 
 | 受接管的公网 TCP | 路径 |
 |---|---|
-| Apple、ChatGPT/OpenAI 的专用域名和已收录的 Apple 网段 | mihomo → Day8 → 住宅代理 → 目标 |
+| Apple、ChatGPT/OpenAI、Claude/Anthropic 的专用域名和已收录的 Apple 网段 | mihomo → Day8 → 住宅代理 → 目标 |
 | Mac 单 App 或 Linux 单容器 TUN 下其余 .cn 域名或中国大陆 IP 目标，含裸 IP 连接 | 上联网卡 DIRECT |
 | 其余域名和公网 IP | mihomo → Day8 → 目标 |
 

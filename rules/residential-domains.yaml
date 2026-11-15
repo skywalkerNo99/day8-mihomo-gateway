@@ -1,6 +1,10 @@
 # Service-specific suffixes and dedicated third-party hostnames.
 payload:
   - +.aaplimg.com
+  - +.ant.dev
+  - +.anthropic.com
+  - +.anthropic.team
+  - +.antspace.dev
   - +.apple
   - +.apple-cloudkit.com
   - +.apple-dns.cn
@@ -108,6 +112,20 @@ payload:
   - +.chat.com
   - +.chatgpt.com
   - +.chatgpt.livekit.cloud
+  - +.chatbotclaude.com
+  - +.clau.de
+  - +.claude.ai
+  - +.claude.app
+  - +.claude.com
+  - +.claude.dev
+  - +.claude.new
+  - +.claude.site
+  - +.claudeacademy.com
+  - +.claudemcpclient.com
+  - +.claudemcpcontent.com
+  - +.claudepages.dev
+  - +.claudestudio.com
+  - +.claudeusercontent.com
   - +.icloud-content.com
   - +.icloud.com
   - +.icloud.com.cn
@@ -164,6 +182,7 @@ payload:
   - mesu-china.apple.com.akadns.net
   - notary-submissions-prod.s3-accelerate.amazonaws.com
   - notary-submissions-prod.s3.us-west-2.amazonaws.com
+  - o1158394.ingest.us.sentry.io
   - openai.gallery.vsassets.io
   - openai.qualtrics.com
   - openaiapi-site.azureedge.net
@@ -175,6 +194,7 @@ payload:
   - prod-support.apple-support.akadns.net
   - production-openaicom-storage.azureedge.net
   - push-apple.com.akadns.net
+  - servd-anthropic-website.b-cdn.net
   - stocks-sparkline-lb.apple.com.akadns.net
   - store.apple.com.edgekey.net
   - store.apple.com.edgekey.net.globalredir.akadns.net

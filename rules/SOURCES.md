@@ -11,6 +11,16 @@
 
 当前生效文件是 `residential-domains.yaml`。它从上述来源选取服务专用后缀、国家或地区 Apple 域名及专用 CDN 主机。上游完整分类及历史补充文件仅供核对。通用验证码、支付、证书、客服等共享主机走默认 Day8。更新生效清单后运行两种分流测试，并检查代表域名及共享域名。
 
+## Claude / Anthropic
+
+核对日期：2026-11-15。此前生效清单没有 Claude/Anthropic 规则。本次补充 18 个专用域名后缀（含根域及任意层级子域），以及两个精确匹配的专用 CDN/遥测租户主机。
+
+- [Claude Code 官方网络访问要求](https://code.claude.com/docs/en/network-config#network-access-requirements)：API、认证、MCP、下载、浏览器桥接和 Artifact 域名，包括 `api.anthropic.com`、`platform.claude.com`、`sso.claude.com`、`downloads.claude.ai`、`bridge.claudeusercontent.com` 和 `*.frame.claudeusercontent.com`，均由主域后缀覆盖。
+- [MetaCubeX Anthropic 分类](https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/anthropic.yaml) 及其 [domain-list-community 来源](https://github.com/v2fly/domain-list-community/blob/master/data/anthropic)：补充产品、短链和内容域名，以及 `servd-anthropic-website.b-cdn.net`、`o1158394.ingest.us.sentry.io`。这些是社区分类的快照，不代表 Anthropic 对所有域名的官方确认。
+- 通用 `storage.googleapis.com`、`github.com`、`registry.npmjs.org`、Datadog、Sentry、CDN 父域和 Cloudflare 验证域名不整体收录，避免把其他应用一起送入住宅出口。Claude 访问任意外部网站和第三方模型网关也仍按目标域名分流。
+
+本清单覆盖上述已知专用域名及其未来子域，不保证覆盖未来新注册的主域、无法识别域名的裸 IP 或共享主机下的专用 URL 路径。不得用 `claude`/`anthropic` 字符串关键词替代主域边界匹配。
+
 ## 中国大陆 IP 归属
 
 IP Geolocation by [DB-IP](https://db-ip.com/db/download/ip-to-country-lite)，使用 2026-11 的 IP to Country Lite，许可为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。`cn-networks.txt` 是提取 country code 为 CN 的地址范围再无损合并为 IPv4/IPv6 CIDR 的派生版本。HK、MO、TW 分列，不归入 CN。
