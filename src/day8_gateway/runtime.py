@@ -9,13 +9,13 @@ from pathlib import Path
 import signal
 import socket
 
-from . import catalog, adapter, config, controller, domain_policy, monitor as metrics, node_updates, residual, verify
+from . import catalog, adapter, config, controller, domain_policy, lan_proxy, monitor as metrics, node_updates, residual, verify
 
 
 def control(root, command, **kwargs):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         timeouts = {'save-residual': 180, 'change-domain-rule': 60, 'verify-system-tun': 90, 'route-delays': 1500, 'verify': 160, 'apply-node': 160, 'health': 160}
-        sock.settimeout(timeouts.get(command, 5))
+        sock.settimeout(60 if command == 'configure-lan-proxy' else timeouts.get(command, 5))
         sock.connect(str(Path(root) / '.local/control.sock'))
         sock.sendall(json.dumps({'command': command, **kwargs}).encode() + b'\n')
         chunks = b''
@@ -234,6 +234,23 @@ async def serve(payload, cfg, args, ready_fd=None):
                           'mihomo_restarts': restarts, 'proxy_port': args.port, 'node_update_version': 2}
                 if hasattr(args, 'update_key'):
                     result['route_token'] = catalog.token(args.update_key, current_node.config)
+            elif command == 'lan-proxy' and policy is not None:
+                result = lan_proxy.status(cfg)
+            elif command == 'configure-lan-proxy' and policy is not None:
+                value = message['network']
+                parts = lan_proxy.fields(value)
+                async with update_lock:
+                    try:
+                        await asyncio.to_thread(controller.apply, *endpoint(), {**cfg, **parts})
+                        lan_proxy.save(local / 'lan-proxy.json', value)
+                    except Exception:
+                        try:
+                            await asyncio.to_thread(controller.apply, *endpoint(), cfg)
+                        except Exception:
+                            stop.set()
+                        raise
+                    cfg.update(parts)
+                result = lan_proxy.status(cfg)
             elif command == 'route-delays' and hasattr(args, 'probes'):
                 result = await args.probes.measure('manual')
             elif command == 'probe-status' and hasattr(args, 'probes'):

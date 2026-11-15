@@ -140,7 +140,7 @@ def remove(args):
         shutil.rmtree(SUPPORT / name, ignore_errors=True)
     for name in ('deployment.enc.json', 'routes.enc.json', 'routes.local.enc.json', 'mihomo'):
         (SUPPORT / name).unlink(missing_ok=True)
-    for name in ('node.enc', 'residual.enc', 'domain-rules.enc', 'probe-settings.json', 'probe-results.json'):
+    for name in ('node.enc', 'residual.enc', 'domain-rules.enc', 'probe-settings.json', 'probe-results.json', 'lan-proxy.json'):
         (SUPPORT / '.local' / name).unlink(missing_ok=True)
     print('Single-app services removed. Previous network restored when recorded.')
 

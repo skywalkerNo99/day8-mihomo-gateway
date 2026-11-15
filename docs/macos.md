@@ -66,6 +66,20 @@ launchctl print "gui/$(id -u)/io.day8gateway.macos"
 
 点「验证并保存」后，后台先经当前 Day8 线路单独测试候选代理。ChatGPT 的 trace 匹配预期值后，后台热加载配置，再从实际分流核心核验、加密保存。失败时继续使用旧配置。已建立的连接可能继续使用原出口，新连接使用新配置。修改只应用于本机；与基础 vault 绑定的加密覆盖文件保存在登录服务的 `.local/residual.enc`，下次登录自动加载。Linux 容器及仓库部署副本单独管理。
 
+## 让 iPad 使用 Mac 的分流规则
+
+两台设备连接同一可信局域网后，可以显式开放用户分流核心的混合代理端口。默认关闭；启用时只允许本机和指定的私有 IPv4 网段（/16 或更窄），控制 API、Muon 和系统 TUN 交接端口仍只监听回环。以下网段只是示例，需替换为当前局域网：
+
+```sh
+PYTHONPATH=src .venv/bin/python -m day8_gateway.desktop enable-lan-proxy 192.168.20.0/24
+PYTHONPATH=src .venv/bin/python -m day8_gateway.desktop lan-proxy
+PYTHONPATH=src .venv/bin/python -m day8_gateway.desktop disable-lan-proxy
+```
+
+设置经本机控制 socket 热加载，并保存在用户私有目录的 `lan-proxy.json`；升级和重新登录后仍生效。入口不使用账户密码，同一允许网段内的设备都可使用，勿在公共 Wi-Fi 开放。切换网段后应关闭或重新指定允许网段。无需路由器端口映射。
+
+iPad 的 Shadowrocket 添加 SOCKS5 节点：地址填写 Mac 的当前局域网 IPv4，端口 `17890`，用户名和密码留空，关闭 TLS 与 UDP 转发。选中该节点，将「全局路由」设为「代理」，不要继续使用旧配置内的逐域名分流或其他节点的代理链。受接管的 TCP 请求进入 Mac 的同一个核心，沿用当前内置住宅域名、自定义规则和国内直连规则；公网 UDP 继续拒绝。Mac 必须保持开机联网，局域网需允许设备互访，地址改变后需更新 iPad 节点地址。IPv4 入口并不提供 iPad IPv6 流量的防绕行保证，客户端应关闭 IPv6 出站。
+
 ## 日常操作
 
 - **线路监测** 每 30 秒分别通过 mihomo 指定 Day8 第一跳和经 Day8 的 residual 出站进行 HTTPS 探测。窗口显示最近 20 个样本、时延和分流核心总连接数。「核验出口」会比对 ChatGPT 自身 trace 与 vault 中的预期值。核验同时检查整机 TUN 分流。

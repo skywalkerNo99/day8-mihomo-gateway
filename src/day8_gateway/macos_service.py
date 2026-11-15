@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from . import macos_keychain, node_updates, residual, runtime, scheduled_probes, single_app
+from . import lan_proxy, macos_keychain, node_updates, residual, runtime, scheduled_probes, single_app
 
 LABEL = 'io.day8gateway.macos'
 # Used only to identify the previous application during migration and recovery.
@@ -17,6 +17,7 @@ async def supervise(payload, args):
     args.mihomo = args.root / 'mihomo'
     args.uplink = single_app.Uplink()
     cfg = single_app.routing(payload, args.update_key, args.adapter_port)
+    cfg.update(lan_proxy.fields(lan_proxy.load(args.root / '.local/lan-proxy.json')))
     args.probes = scheduled_probes.ProbeSchedule(args.root, args.update_key)
     timer = asyncio.create_task(args.probes.run())
     try:

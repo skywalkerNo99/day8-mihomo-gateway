@@ -51,6 +51,12 @@ def send_packet(context, target, packet):
 
 def main(args):
     action, *params = args
+    if action == 'lan-proxy':
+        return runtime.control(ROOT, action)
+    if action in ('enable-lan-proxy', 'disable-lan-proxy'):
+        from . import lan_proxy
+        value = lan_proxy.network(params[0]) if action == 'enable-lan-proxy' else None
+        return runtime.control(ROOT, 'configure-lan-proxy', network=value)
     if action == 'get-residual':
         return runtime.control(ROOT, action)
     if action == 'save-residual':
