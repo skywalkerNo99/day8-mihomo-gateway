@@ -1,8 +1,8 @@
 # 路由与验收
 
-Mac 单 App 模式按住宅、用户自定义、国内直连、Day8 的顺序匹配公网 TCP。Linux 单容器 TUN 按住宅、国内直连、Day8 的顺序匹配公网 TCP。国内直连覆盖 .cn 域名和 CN 网段的目标 IP，包括直接使用 IP 的连接。Mac 关闭管理 App 后由 launchd 服务继续处理。显式应用代理模式的基础策略将普通公网 TCP 交给 Day8。住宅 SOCKS5 的拨号固定使用 Day8，用于 Apple/ChatGPT/OpenAI/Claude/Anthropic 专用域名、Apple 专用网段和明确指定的住宅规则。回环或局域网通过 TUN 时直连。Day8 节点的 TCP 引导连接按节点地址和端口放行。旧 profile 留作恢复。
+Mac 单 App 模式按住宅、用户自定义、国内直连、Day8 的顺序匹配公网 TCP。Linux 单容器 TUN 按住宅、国内直连、Day8 的顺序匹配公网 TCP。国内直连覆盖 .cn 域名和 CN 网段的目标 IP，包括直接使用 IP 的连接。Mac 关闭管理 App 后由 launchd 服务继续处理。显式应用代理模式的基础策略将普通公网 TCP 交给 Day8。住宅 SOCKS5 的拨号固定使用 Day8，用于已收录的 Apple、ChatGPT/OpenAI、Claude/Anthropic 和 Google 域名、Apple 专用网段和明确指定的住宅规则。回环或局域网通过 TUN 时直连。Day8 节点的 TCP 引导连接按节点地址和端口放行。旧 profile 留作恢复。
 
-专用域名快照在 `rules/residential-domains.yaml`。域名后缀包含根域和子域。Claude/Anthropic 的网页、API、登录、更新、用户内容和专用 CDN 主机也经 Day8 → 住宅代理，规则优先于用户自定义及国内直连。Stripe、Cloudflare 验证页、Google Storage、通用遥测等共享主机按普通公网规则处理；专用租户主机单独收录。用户访问同一共享域名时，只凭域名无法区分它属于哪个应用。未命中任何分流规则的域名和裸 IP 走 Day8；核对实际连接后可更新清单。业务 DNS 的 DoH 上游经 Day8。整机部署还需检查应用自带 DNS、TUN 排除项和 IPv6。
+域名快照在 `rules/residential-domains.yaml`。域名后缀包含根域和子域。Google 规则覆盖搜索地区域名（含 `google.cn`）、登录、Gemini、Antigravity、Google API（含 `storage.googleapis.com`）、静态资源和 YouTube。Stripe、Cloudflare 验证页和通用遥测等共享主机按普通公网规则处理，专用租户主机单独收录。Antigravity 网页与登录命中 `google` 或 `google.com` 后缀，客户端 API 与下载命中 `googleapis.com` 或 `gvt1.com` 后缀。App Engine、Cloud Run 和 Firebase Hosting 等共享租户域名继续走默认 Day8。未命中任何分流规则的域名和裸 IP 走 Day8。业务 DNS 的 DoH 上游经 Day8。整机部署还需检查应用自带 DNS、TUN 排除项和 IPv6。
 
 公网 UDP 在当前版本显式拒绝。TUN 模式中已识别的住宅域名 UDP 也先于局域网直连规则被拒绝。Linux 显式应用代理模式需要业务容器只接入隔离网络；单容器 TUN 模式由共享网络命名空间内的防火墙拒绝公网 UDP，并关闭 IPv6。部署和验收见 [容器部署](container.md)。住宅规则后有同范围的拒绝规则，Day8 兜底后有最终拒绝。住宅故障时住宅目标应失败，普通请求继续；依赖 Day8 的单跳和住宅连接在第一跳故障时均应失败。
 

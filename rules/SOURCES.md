@@ -17,9 +17,15 @@
 
 - [Claude Code 官方网络访问要求](https://code.claude.com/docs/en/network-config#network-access-requirements)：API、认证、MCP、下载、浏览器桥接和 Artifact 域名，包括 `api.anthropic.com`、`platform.claude.com`、`sso.claude.com`、`downloads.claude.ai`、`bridge.claudeusercontent.com` 和 `*.frame.claudeusercontent.com`，均由主域后缀覆盖。
 - [MetaCubeX Anthropic 分类](https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/anthropic.yaml) 及其 [domain-list-community 来源](https://github.com/v2fly/domain-list-community/blob/master/data/anthropic)：补充产品、短链和内容域名，以及 `servd-anthropic-website.b-cdn.net`、`o1158394.ingest.us.sentry.io`。这些是社区分类的快照，不代表 Anthropic 对所有域名的官方确认。
-- 通用 `storage.googleapis.com`、`github.com`、`registry.npmjs.org`、Datadog、Sentry、CDN 父域和 Cloudflare 验证域名不整体收录，避免把其他应用一起送入住宅出口。Claude 访问任意外部网站和第三方模型网关也仍按目标域名分流。
+- `github.com`、`registry.npmjs.org`、Datadog、Sentry、共享 CDN 父域和 Cloudflare 验证域名按普通公网规则处理。Claude 访问外部网站和第三方模型网关时按目标域名分流。
 
 本清单覆盖上述已知专用域名及其未来子域，不保证覆盖未来新注册的主域、无法识别域名的裸 IP 或共享主机下的专用 URL 路径。不得用 `claude`/`anthropic` 字符串关键词替代主域边界匹配。
+
+## Google / Gemini / Antigravity / YouTube
+
+核对日期为 2026-11-25。搜索地区域名来自 [Google 支持的搜索域名](https://www.google.com/supported_domains)。Google 登录、API、内容托管、静态资源和更新域名参考 [Chrome 官方网络要求](https://support.google.com/chrome/a/answer/6334001) 和 [Android Enterprise 官方网络要求](https://support.google.com/work/android/answer/10513641)。其他 Google 服务及 YouTube 地区和播放域名参考 domain-list-community 的 [Google](https://github.com/v2fly/domain-list-community/blob/master/data/google) 与 [YouTube](https://github.com/v2fly/domain-list-community/blob/master/data/youtube) 分类。清单按后缀匹配，例如 `googleapis.com` 同时覆盖 Gemini API 和 Google Cloud Storage。
+
+[Antigravity 企业网络要求](https://antigravity.google/docs/enterprise#network-allowlists-and-mtls-endpoints)列出的全局、地区和 mTLS API 均由 `googleapis.com` 后缀覆盖。[Antigravity 官方下载页](https://antigravity.google/download)使用 `antigravity.google`、`storage.googleapis.com` 和 `edgedl.me.gvt1.com`。
 
 ## 中国大陆 IP 归属
 

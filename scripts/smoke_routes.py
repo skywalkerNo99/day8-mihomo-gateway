@@ -104,7 +104,7 @@ def check_udp_rejection(port):
             relay_host = socket.inet_ntoa(reader.read(4))
             relay_port = struct.unpack('!H', reader.read(2))[0]
             assert relay_host in ('127.0.0.1', '0.0.0.0') and relay_port
-            for host in (b'udp-test.apple.com', b'udp-route.invalid', b'udp-test.claude.ai'):
+            for host in (b'udp-test.apple.com', b'udp-route.invalid', b'udp-test.claude.ai', b'udp-test.google.com'):
                 packet = bytes([0, 0, 0, 3, len(host)]) + host + struct.pack('!H', sink.getsockname()[1]) + b'test'
                 client.sendto(packet, ('127.0.0.1', relay_port))
             ready, _, _ = select.select([sink, client], [], [], .75)
@@ -128,7 +128,7 @@ def run(binary):
         # Require that the only remotely dialled endpoint in this test is the local peer.
         cfg['log-level'] = 'info'
         cfg['dns']['enable'] = False
-        cfg['hosts'] = dict.fromkeys(('udp-test.apple.com', 'udp-route.invalid', 'udp-test.claude.ai'), '127.0.0.1')
+        cfg['hosts'] = dict.fromkeys(('udp-test.apple.com', 'udp-route.invalid', 'udp-test.claude.ai', 'udp-test.google.com'), '127.0.0.1')
         cfg['sniffer']['enable'] = False
         with subprocess.Popen([str(binary), '-d', tmp, '-f', '/dev/stdin'], stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as core:
@@ -159,16 +159,29 @@ def run(binary):
                            'platform.claude.com', 'sso.claude.com', 'downloads.claude.ai',
                            'bridge.claudeusercontent.com', 'artifact.frame.claudeusercontent.com')]
                 routes += [(host, 'one') for host in ('notclaude.ai', 'claude.ai.example.invalid',
-                           'anthropic.com.example.invalid', 'storage.googleapis.com', 'github.com',
+                           'anthropic.com.example.invalid', 'github.com',
                            'registry.npmjs.org', 'http-intake.logs.us5.datadoghq.com', 'cdn.usefathom.com',
                            'other.ingest.us.sentry.io', 'b-cdn.net', 'other.b-cdn.net')]
+                routes += [(host, 'two') for host in (
+                    'google.com', 'accounts.google.com', 'www.google.cn', 'www.google.co.jp',
+                    'gemini.google.com', 'generativelanguage.googleapis.com',
+                    'antigravity.google', 'antigravity.google.com', 'cloudcode-pa.googleapis.com',
+                    'businessaicode.us.rep.googleapis.com', 'aiplatform.mtls.googleapis.com',
+                    'storage.googleapis.com', 'edgedl.me.gvt1.com', 'fonts.gstatic.com',
+                    'lh3.googleusercontent.com', 'www.youtube.com', 'i.ytimg.com',
+                )]
+                routes += [(host, 'one') for host in (
+                    'notgoogle.com', 'google.com.example.invalid', 'antigravity.google.example.invalid',
+                    'tenant.appspot.com', 'tenant.run.app', 'tenant.web.app',
+                )]
                 for host, expected in routes:
                     actual = probe(port, host)
                     assert actual == f'{expected} {host}', (host, actual)
                 check_udp_rejection(port)
                 for down in (peer.second_down, peer.first_down):
                     down.set()
-                    for host in ('chatgpt.com', 'claude.ai', 'api.anthropic.com', 'new.example.invalid'):
+                    for host in ('chatgpt.com', 'claude.ai', 'api.anthropic.com',
+                                 'gemini.google.com', 'antigravity.google', 'new.example.invalid'):
                         try:
                             result = probe(port, host)
                         except (ConnectionResetError, BrokenPipeError):
@@ -178,7 +191,8 @@ def run(binary):
                     down.clear()
                     assert probe(port, 'chatgpt.com') == 'two chatgpt.com'
                     assert probe(port, 'claude.ai') == 'two claude.ai'
-                print(f'{len(routes)} TCP routes, 3 UDP rejections, both hop failures and both recoveries passed (synthetic loopback).')
+                    assert probe(port, 'antigravity.google') == 'two antigravity.google'
+                print(f'{len(routes)} TCP routes, 4 UDP rejections, both hop failures and both recoveries passed (synthetic loopback).')
             except Exception:
                 core.terminate()
                 print(core.stdout.read().decode(errors='replace'), file=sys.stderr)

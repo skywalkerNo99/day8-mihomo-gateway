@@ -88,10 +88,16 @@ def main():
         process.stdin.close()
         for _ in range(100):
             try:
-                controller.request(f'http://127.0.0.1:{api_port}', cfg['secret'], '/version')
-                break
+                providers = controller.request(f'http://127.0.0.1:{api_port}', cfg['secret'], '/providers/rules')['providers']
+                if all((providers.get(name) or {}).get('ruleCount', 0) for name in cfg['rule-providers']):
+                    with socket.create_connection(('127.0.0.1', port), 1):
+                        break
             except OSError:
-                time.sleep(.05)
+                if process.poll() is not None:
+                    raise RuntimeError('Core exited before becoming ready.') from None
+            time.sleep(.05)
+        else:
+            raise RuntimeError('Core rules did not become ready.')
         assert probe(port, '127.0.0.1', direct.server_address[1]) == 'direct', 'CN literal IP did not use DIRECT'
         assert probe(port, 'direct-test.cn', direct.server_address[1]) == 'direct', '.cn domain did not use DIRECT'
         assert probe(port, '192.0.2.99', 443) == 'one 192.0.2.99', 'Non-CN test IP did not use Day8'
